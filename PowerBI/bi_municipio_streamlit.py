@@ -13,10 +13,161 @@ st.set_page_config(page_title="BI Município", page_icon="📊", layout="wide")
 
 st.markdown("""
 <style>
-.stApp {background: linear-gradient(180deg, #f7fafc 0%, #eef3f8 100%);}
-.block-container {padding-top: 1rem; padding-bottom: 2rem; max-width: 100%;}
-div[data-testid="stMetric"] {background: white; border: 1px solid #E5E7EB; padding: .8rem; border-radius: 16px; box-shadow: 0 2px 12px rgba(15,23,42,.04);}
-.section-card {background: white; border: 1px solid #E5E7EB; padding: 1rem; border-radius: 18px; box-shadow: 0 2px 12px rgba(15,23,42,.04); margin-bottom: 1rem;}
+
+/* ===== APP ===== */
+.stApp {
+    background:
+        radial-gradient(circle at top left, rgba(15,108,189,0.10), transparent 28%),
+        linear-gradient(180deg, #F4F7FB 0%, #EEF3F8 100%);
+}
+
+.block-container {
+    padding-top: 1.1rem;
+    padding-bottom: 2rem;
+    padding-left: 1.6rem;
+    padding-right: 1.6rem;
+    max-width: 100%;
+}
+
+/* ===== SIDEBAR ===== */
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #0F172A 0%, #111827 100%);
+    border-right: 1px solid rgba(255,255,255,0.08);
+}
+
+section[data-testid="stSidebar"] * {
+    color: #F8FAFC !important;
+}
+
+section[data-testid="stSidebar"] .stMarkdown h2,
+section[data-testid="stSidebar"] .stMarkdown h3 {
+    color: #FFFFFF !important;
+    letter-spacing: -0.2px;
+}
+
+/* ===== TIPOGRAFIA ===== */
+h1 {
+    color: #0F172A !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.7px;
+    margin-bottom: 0.15rem;
+}
+
+h2, h3 {
+    color: #0F172A !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.3px;
+}
+
+p, label, .stMarkdown, .stCaption {
+    color: #334155;
+}
+
+/* ===== METRICAS NATIVAS ===== */
+div[data-testid="stMetric"] {
+    background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
+    border: 1px solid #E2E8F0;
+    padding: 1rem;
+    border-radius: 18px;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+}
+
+/* ===== EXPANDER ===== */
+details {
+    background: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 16px;
+    padding: 0.35rem 0.8rem;
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.04);
+}
+
+/* ===== INPUTS ===== */
+div[data-baseweb="select"] > div,
+div[data-baseweb="input"] > div {
+    border-radius: 12px !important;
+    border-color: #CBD5E1 !important;
+}
+
+/* ===== PLOTLY CONTAINER ===== */
+div[data-testid="stPlotlyChart"] {
+    background: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 20px;
+    padding: 0.35rem 0.35rem 0.15rem 0.35rem;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+/* ===== SECTION CARD ===== */
+.section-card {
+    background: linear-gradient(180deg, #FFFFFF 0%, #FBFDFF 100%);
+    border: 1px solid #E2E8F0;
+    border-radius: 22px;
+    padding: 1rem 1rem 0.6rem 1rem;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+    margin-bottom: 1rem;
+}
+
+.section-title {
+    font-size: 1.06rem;
+    font-weight: 800;
+    color: #0F172A;
+    margin-bottom: 0.2rem;
+    letter-spacing: -0.3px;
+}
+
+.section-subtitle {
+    font-size: 0.92rem;
+    color: #64748B;
+    margin-bottom: 1rem;
+}
+
+/* ===== HERO / TOPO ===== */
+.hero-wrap {
+    background: linear-gradient(135deg, #0F172A 0%, #12324A 50%, #0F6CBD 100%);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 24px;
+    padding: 1.2rem 1.25rem;
+    margin-bottom: 1.1rem;
+    box-shadow: 0 16px 36px rgba(15, 23, 42, 0.16);
+}
+
+.hero-title {
+    color: #FFFFFF;
+    font-size: 1.9rem;
+    font-weight: 800;
+    letter-spacing: -0.8px;
+    margin-bottom: 0.2rem;
+}
+
+.hero-subtitle {
+    color: rgba(255,255,255,0.82);
+    font-size: 0.98rem;
+    margin-bottom: 1rem;
+}
+
+.hero-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.hero-chip {
+    background: rgba(255,255,255,0.12);
+    color: #FFFFFF;
+    border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 999px;
+    padding: 0.42rem 0.78rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+    backdrop-filter: blur(6px);
+}
+
+.soft-divider {
+    height: 1px;
+    background: linear-gradient(90deg, rgba(148,163,184,0), rgba(148,163,184,0.45), rgba(148,163,184,0));
+    margin: 0.6rem 0 1rem 0;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -176,26 +327,174 @@ def format_int(x):
         return "-"
     return f"{int(round(x)):,}".replace(",", ".")
 
-def card(title, value):
-    st.metric(title, value)
+def card(title, value, icon="📊", subtitle="Indicador consolidado"):
+    st.markdown(f"""
+    <div style="
+        background: linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 100%);
+        border: 1px solid #E2E8F0;
+        border-radius: 20px;
+        padding: 18px 18px 16px 18px;
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+        min-height: 130px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+    ">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">
+            <div>
+                <div style="
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: #64748B;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    margin-bottom: 6px;
+                ">
+                    {title}
+                </div>
+                <div style="
+                    font-size: 12px;
+                    color: #94A3B8;
+                ">
+                    {subtitle}
+                </div>
+            </div>
+            <div style="
+                width: 42px;
+                height: 42px;
+                border-radius: 12px;
+                background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%);
+                display:flex;
+                align-items:center;
+                justify-content:center;
+                font-size: 20px;
+            ">
+                {icon}
+            </div>
+        </div>
 
+        <div style="
+            font-size: 32px;
+            font-weight: 800;
+            color: #0F172A;
+            line-height: 1;
+            margin-top: 8px;
+        ">
+            {value}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+def section_start(title, subtitle=""):
+    st.markdown(
+        f"""
+        <div class="section-card">
+            <div class="section-title">{title}</div>
+            <div class="section-subtitle">{subtitle}</div>
+        """,
+        unsafe_allow_html=True
+    )
+
+def section_end():
+    st.markdown("</div>", unsafe_allow_html=True)
+
+def hero_header(page_title, source_name, meses_selecionados):
+    if not meses_selecionados:
+        periodo = "Todos os meses"
+    elif len(meses_selecionados) <= 4:
+        periodo = " | ".join(meses_selecionados)
+    else:
+        periodo = " | ".join(meses_selecionados[:4]) + "..."
+
+    data_ref = dt.datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    st.markdown(
+        f"""
+        <div class="hero-wrap">
+            <div class="hero-title">BI Município</div>
+            <div class="hero-subtitle">
+                Painel executivo de indicadores assistenciais 
+            </div>
+            <div class="hero-chip-row">
+                <div class="hero-chip">Página: {page_title}</div>
+                <div class="hero-chip">Período: {periodo}</div>
+                <div class="hero-chip">Fonte: {source_name}</div>
+                <div class="hero-chip">Atualizado em: {data_ref}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+def apply_plotly_theme(fig):
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="#FFFFFF",
+        font=dict(color="#334155", size=12),
+        title_font=dict(color="#0F172A", size=16),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="left",
+            x=0
+        ),
+        margin=dict(l=20, r=20, t=45, b=20)
+    )
+    fig.update_xaxes(
+        showgrid=False,
+        linecolor="#E2E8F0",
+        tickfont=dict(color="#64748B")
+    )
+    fig.update_yaxes(
+        gridcolor="rgba(148,163,184,0.20)",
+        zeroline=False,
+        tickfont=dict(color="#64748B")
+    )
+    return fig
 def line_with_optional_meta(df, title, main_series=None, unit_suffix="", prefix="line"):
     st.markdown(f"**{title}**")
     work = df.dropna(subset=["valor_num"]).copy()
     fig = go.Figure()
+
     if main_series:
         main = work[work["serie_norm"] == main_series.upper()]
         if not main.empty:
-            fig.add_trace(go.Scatter(x=main["mes_label"], y=main["valor_num"], mode="lines+markers", name=main_series))
+            fig.add_trace(
+                go.Scatter(
+                    x=main["mes_label"],
+                    y=main["valor_num"],
+                    mode="lines+markers",
+                    name=main_series
+                )
+            )
     else:
         for serie in work["serie"].dropna().unique():
             temp = work[work["serie"] == serie]
-            fig.add_trace(go.Scatter(x=temp["mes_label"], y=temp["valor_num"], mode="lines+markers", name=str(serie)))
+            fig.add_trace(
+                go.Scatter(
+                    x=temp["mes_label"],
+                    y=temp["valor_num"],
+                    mode="lines+markers",
+                    name=str(serie)
+                )
+            )
+
     meta = work[work["serie_norm"] == "META"]
     if not meta.empty:
-        fig.add_trace(go.Scatter(x=meta["mes_label"], y=meta["valor_num"], mode="lines+markers", name="Meta", line=dict(dash="dash")))
-    fig.update_layout(height=320, margin=dict(l=20,r=20,t=30,b=20), yaxis_title=unit_suffix)
+        fig.add_trace(
+            go.Scatter(
+                x=meta["mes_label"],
+                y=meta["valor_num"],
+                mode="lines+markers",
+                name="Meta",
+                line=dict(dash="dash")
+            )
+        )
+
+    fig.update_layout(height=320, yaxis_title=unit_suffix)
+    fig = apply_plotly_theme(fig)
     plot(fig, prefix)
+
 
 def grouped_bar(df, title, color_map=None, barmode="group", unit_suffix="", prefix="bar"):
     st.markdown(f"**{title}**")
@@ -203,8 +502,18 @@ def grouped_bar(df, title, color_map=None, barmode="group", unit_suffix="", pref
     if work.empty:
         st.info("Sem dados para este gráfico.")
         return
-    fig = px.bar(work, x="mes_label", y="valor_num", color="serie", barmode=barmode, color_discrete_map=color_map or {})
-    fig.update_layout(height=360, margin=dict(l=20,r=20,t=30,b=20), legend_title_text="", yaxis_title=unit_suffix)
+
+    fig = px.bar(
+        work,
+        x="mes_label",
+        y="valor_num",
+        color="serie",
+        barmode=barmode,
+        color_discrete_map=color_map or {}
+    )
+
+    fig.update_layout(height=360, legend_title_text="", yaxis_title=unit_suffix)
+    fig = apply_plotly_theme(fig)
     plot(fig, prefix)
 
 def stacked_bar(df, title, color_map=None, as_percent=False, prefix="stack"):
@@ -213,13 +522,34 @@ def stacked_bar(df, title, color_map=None, as_percent=False, prefix="stack"):
     if work.empty:
         st.info("Sem dados para este gráfico.")
         return
-    pivot = work.pivot_table(index="mes_label", columns="serie", values="valor_num", aggfunc="sum").fillna(0)
+
+    pivot = work.pivot_table(
+        index="mes_label",
+        columns="serie",
+        values="valor_num",
+        aggfunc="sum"
+    ).fillna(0)
+
     if as_percent:
         pivot = pivot.div(pivot.sum(axis=1).replace(0, pd.NA), axis=0) * 100
+
     fig = go.Figure()
     for serie in pivot.columns:
-        fig.add_trace(go.Bar(x=pivot.index, y=pivot[serie], name=serie, marker_color=(color_map or {}).get(serie)))
-    fig.update_layout(barmode="stack", height=360, margin=dict(l=20,r=20,t=30,b=20), yaxis_title="%" if as_percent else "Quantidade")
+        fig.add_trace(
+            go.Bar(
+                x=pivot.index,
+                y=pivot[serie],
+                name=serie,
+                marker_color=(color_map or {}).get(serie)
+            )
+        )
+
+    fig.update_layout(
+        barmode="stack",
+        height=360,
+        yaxis_title="%" if as_percent else "Quantidade"
+    )
+    fig = apply_plotly_theme(fig)
     plot(fig, prefix)
 
 def pie_latest(df, title, color_map=None, prefix="pie"):
@@ -228,17 +558,27 @@ def pie_latest(df, title, color_map=None, prefix="pie"):
     if work.empty:
         st.info("Sem dados para este gráfico.")
         return
+
     latest_mes = work["mes"].dropna().max()
     latest = work[work["mes"] == latest_mes]
     if latest.empty:
         st.info("Sem dados para este gráfico.")
         return
-    fig = px.pie(latest, names="serie", values="valor_num", color="serie", color_discrete_map=color_map or {})
-    fig.update_layout(height=360, margin=dict(l=20,r=20,t=30,b=20))
-    plot(fig, prefix)
 
+    fig = px.pie(
+        latest,
+        names="serie",
+        values="valor_num",
+        color="serie",
+        color_discrete_map=color_map or {}
+    )
+
+    fig.update_layout(height=360)
+    fig = apply_plotly_theme(fig)
+    plot(fig, prefix)
 def render_upa_page(df, unidade):
     st.subheader(unidade)
+
     recep = filter_panel(df, unidade, "PACIENTES RECEPCIONADOS")
     atend_med = filter_panel(df, unidade, "ATENDIMENTOS MÉDICOS")
     risco = filter_panel(df, unidade, "ATENDIMENTOS POR CLASSIFICAÇÃO DE RISCO")
@@ -253,65 +593,174 @@ def render_upa_page(df, unidade):
     origem = filter_panel(df, unidade, "ATENDIMENTOS DE  PACIENTES")
     obitos = filter_panel(df, unidade, "ÓBITOS")
 
-    c1,c2,c3,c4 = st.columns(4)
-    with c1: card("Pacientes recepcionados", format_int(recep["valor_num"].sum()))
-    with c2: card("Atendimentos médicos", format_int(atend_med[atend_med["serie_norm"]=="ATENDIMENTOS MÉDICOS"]["valor_num"].sum()))
-    with c3: card("Óbitos", format_int(obitos["valor_num"].sum()))
-    with c4: card("Exames internos", format_int(exames[~exames["serie_norm"].eq("TOTAL")]["valor_num"].sum()))
+    section_start("Resumo executivo", "Visão consolidada dos principais indicadores da unidade")
+    c1, c2, c3, c4 = st.columns(4)
 
-    col1,col2 = st.columns(2)
+    with c1:
+        card(
+            "Pacientes recepcionados",
+            format_int(recep["valor_num"].sum()),
+            icon="👥",
+            subtitle="Volume total no período"
+        )
+
+    with c2:
+        card(
+            "Atendimentos médicos",
+            format_int(atend_med[atend_med["serie_norm"] == "ATENDIMENTOS MÉDICOS"]["valor_num"].sum()),
+            icon="🩺",
+            subtitle="Produção médica consolidada"
+        )
+
+    with c3:
+        card(
+            "Óbitos",
+            format_int(obitos["valor_num"].sum()),
+            icon="⚠️",
+            subtitle="Ocorrências registradas"
+        )
+
+    with c4:
+        card(
+            "Exames internos",
+            format_int(exames[~exames["serie_norm"].eq("TOTAL")]["valor_num"].sum()),
+            icon="🧪",
+            subtitle="Procedimentos realizados"
+        )
+    section_end()
+
+    section_start("Produção assistencial", "Indicadores centrais de entrada e produção médica")
+    col1, col2 = st.columns(2)
+
     with col1:
         st.markdown("**Pacientes recepcionados por mês + média diária**")
         fig = go.Figure()
         main = recep[recep["serie_norm"] == "PACIENTES RECEPCIONADOS"]
-        avg = recep[recep["serie_norm"].isin(["MÉDIA DIÁRIA","MEDIA DIÁRIA","MEDIA DIARIA"])]
-        if not main.empty:
-            fig.add_trace(go.Bar(x=main["mes_label"], y=main["valor_num"], name="Pacientes recepcionados"))
-        if not avg.empty:
-            fig.add_trace(go.Scatter(x=avg["mes_label"], y=avg["valor_num"], mode="lines+markers", name="Média diária"))
-        fig.update_layout(height=340, margin=dict(l=20,r=20,t=30,b=20))
-        plot(fig, f"{unidade}_recep_media")
-    with col2:
-        line_with_optional_meta(atend_med, "Atendimentos médicos (comparando com a meta)", main_series="ATENDIMENTOS MÉDICOS", prefix=f"{unidade}_atend_med")
+        avg = recep[recep["serie_norm"].isin(["MÉDIA DIÁRIA", "MEDIA DIÁRIA", "MEDIA DIARIA"])]
 
-    stacked_bar(risco[~risco["serie_norm"].eq("TOTAL DE ATENDIMENTOS")], "Atendimentos por classificação de risco", color_map=RISK_COLORS, prefix=f"{unidade}_risco_qtd")
-    stacked_bar(perc_risco[~perc_risco["serie_norm"].eq("TOTAL DE ATENDIMENTOS")], "Percentual de atendimentos por classificação de risco", color_map=RISK_COLORS, as_percent=True, prefix=f"{unidade}_risco_perc")
-    line_with_optional_meta(espera, "Tempo de espera para classificação de risco (comparando com a meta)", main_series="MÉDIA GERAL", unit_suffix="Minutos", prefix=f"{unidade}_espera_class")
+        if not main.empty:
+            fig.add_trace(go.Bar(
+                x=main["mes_label"],
+                y=main["valor_num"],
+                name="Pacientes recepcionados"
+            ))
+        if not avg.empty:
+            fig.add_trace(go.Scatter(
+                x=avg["mes_label"],
+                y=avg["valor_num"],
+                mode="lines+markers",
+                name="Média diária"
+            ))
+
+        fig.update_layout(height=340)
+        fig = apply_plotly_theme(fig)
+        plot(fig, f"{unidade}_recep_media")
+
+    with col2:
+        line_with_optional_meta(
+            atend_med,
+            "Atendimentos médicos (comparando com a meta)",
+            main_series="ATENDIMENTOS MÉDICOS",
+            prefix=f"{unidade}_atend_med"
+        )
+    section_end()
+
+    section_start("Risco e tempo assistencial", "Leitura da pressão assistencial, classificação e desempenho de atendimento")
+    stacked_bar(
+        risco[~risco["serie_norm"].eq("TOTAL DE ATENDIMENTOS")],
+        "Atendimentos por classificação de risco",
+        color_map=RISK_COLORS,
+        prefix=f"{unidade}_risco_qtd"
+    )
+
+    stacked_bar(
+        perc_risco[~perc_risco["serie_norm"].eq("TOTAL DE ATENDIMENTOS")],
+        "Percentual de atendimentos por classificação de risco",
+        color_map=RISK_COLORS,
+        as_percent=True,
+        prefix=f"{unidade}_risco_perc"
+    )
+
+    line_with_optional_meta(
+        espera,
+        "Tempo de espera para classificação de risco (comparando com a meta)",
+        main_series="MÉDIA GERAL",
+        unit_suffix="Minutos",
+        prefix=f"{unidade}_espera_class"
+    )
 
     st.markdown("**Tempo médio de espera de atendimento médico por classificação de risco**")
     med = tempo_med.dropna(subset=["valor_num"]).copy()
     fig = go.Figure()
+
     for serie in med["serie"].dropna().unique():
         temp = med[med["serie"] == serie]
-        fig.add_trace(go.Scatter(x=temp["mes_label"], y=temp["valor_num"], mode="lines+markers", name=serie))
-    fig.update_layout(height=320, margin=dict(l=20,r=20,t=30,b=20), yaxis_title="Minutos")
+        fig.add_trace(go.Scatter(
+            x=temp["mes_label"],
+            y=temp["valor_num"],
+            mode="lines+markers",
+            name=serie
+        ))
+
+    fig.update_layout(height=320, yaxis_title="Minutos")
+    fig = apply_plotly_theme(fig)
     plot(fig, f"{unidade}_tempo_med_risco")
+    section_end()
 
-    col1,col2=st.columns(2)
+    section_start("Permanência, apoio e desfechos", "Indicadores operacionais complementares e perfil da demanda")
+    col1, col2 = st.columns(2)
     with col1:
-        grouped_bar(intern, "Tempo de permanência de pacientes internados", unit_suffix="Minutos", prefix=f"{unidade}_intern")
+        grouped_bar(
+            intern,
+            "Tempo de permanência de pacientes internados",
+            unit_suffix="Minutos",
+            prefix=f"{unidade}_intern"
+        )
     with col2:
-        grouped_bar(semint, "Tempo de permanência de pacientes sem internação", unit_suffix="Minutos", prefix=f"{unidade}_semintern")
+        grouped_bar(
+            semint,
+            "Tempo de permanência de pacientes sem internação",
+            unit_suffix="Minutos",
+            prefix=f"{unidade}_semintern"
+        )
 
-    col1,col2=st.columns(2)
+    col1, col2 = st.columns(2)
     with col1:
         grouped_bar(transf, "Transferências (remoções)", prefix=f"{unidade}_transf")
     with col2:
-        grouped_bar(exames[~exames["serie_norm"].eq("TOTAL")], "Exames internos", prefix=f"{unidade}_exames")
+        grouped_bar(
+            exames[~exames["serie_norm"].eq("TOTAL")],
+            "Exames internos",
+            prefix=f"{unidade}_exames"
+        )
 
-    grouped_bar(faixa[~faixa["serie_norm"].eq("TOTAL")], "Atendimentos divididos por faixa etária", prefix=f"{unidade}_faixa")
+    grouped_bar(
+        faixa[~faixa["serie_norm"].eq("TOTAL")],
+        "Atendimentos divididos por faixa etária",
+        prefix=f"{unidade}_faixa"
+    )
 
-    col1,col2=st.columns(2)
+    col1, col2 = st.columns(2)
     with col1:
-        grouped_bar(origem[~origem["serie_norm"].eq("TOTAL")], "Atendimentos de pacientes da cidade x outras cidades", prefix=f"{unidade}_origem_bar")
+        grouped_bar(
+            origem[~origem["serie_norm"].eq("TOTAL")],
+            "Atendimentos de pacientes da cidade x outras cidades",
+            prefix=f"{unidade}_origem_bar"
+        )
     with col2:
-        pie_latest(origem[~origem["serie_norm"].eq("TOTAL")], "Distribuição mais recente de pacientes por origem", prefix=f"{unidade}_origem_pie")
+        pie_latest(
+            origem[~origem["serie_norm"].eq("TOTAL")],
+            "Distribuição mais recente de pacientes por origem",
+            prefix=f"{unidade}_origem_pie"
+        )
 
     grouped_bar(obitos, "Óbitos", prefix=f"{unidade}_obitos")
+    section_end()
 
 def render_hmji(df):
     unidade = "HMJI"
     st.subheader(unidade)
+
     clin = filter_panel(df, unidade, "PACIENTES CLÍNICOS ATENDIDOS")
     obitos = filter_panel(df, unidade, "ÓBITOS")
     esp = filter_panel(df, unidade, "CONSULTAS ESPECIALIZADAS")
@@ -319,23 +768,46 @@ def render_hmji(df):
     cir = filter_panel(df, unidade, "PROCEDIMENTOS CIRÚRGICOS")
     anes = filter_panel(df, unidade, "ANESTESIAS")
 
-    c1,c2,c3=st.columns(3)
-    with c1: card("Pacientes clínicos", format_int(clin[clin["serie_norm"]=="PACIENTES CLÍNICOS ATENDIDOS"]["valor_num"].sum()))
-    with c2: card("Óbitos", format_int(obitos["valor_num"].sum()))
-    with c3: card("Procedimentos cirúrgicos", format_int(cir["valor_num"].sum()))
+    c1, c2, c3 = st.columns(3)
 
-    col1,col2=st.columns(2)
+    with c1:
+        card(
+            "Pacientes clínicos",
+            format_int(clin[clin["serie_norm"] == "PACIENTES CLÍNICOS ATENDIDOS"]["valor_num"].sum()),
+            icon="🏥",
+            subtitle="Atendimentos no período"
+        )
+
+    with c2:
+        card(
+            "Óbitos",
+            format_int(obitos["valor_num"].sum()),
+            icon="⚠️",
+            subtitle="Eventos registrados"
+        )
+
+    with c3:
+        card(
+            "Procedimentos cirúrgicos",
+            format_int(cir["valor_num"].sum()),
+            icon="🩹",
+            subtitle="Produção cirúrgica"
+        )
+
+    col1, col2 = st.columns(2)
     with col1:
         st.markdown("**Pacientes clínicos atendidos / média diária**")
         fig = go.Figure()
         main = clin[clin["serie_norm"] == "PACIENTES CLÍNICOS ATENDIDOS"]
-        avg = clin[clin["serie_norm"].isin(["MÉDIA DIÁRIA","MEDIA DIÁRIA","MEDIA DIARIA"])]
+        avg = clin[clin["serie_norm"].isin(["MÉDIA DIÁRIA", "MEDIA DIÁRIA", "MEDIA DIARIA"])]
         if not main.empty:
             fig.add_trace(go.Bar(x=main["mes_label"], y=main["valor_num"], name="Pacientes clínicos"))
         if not avg.empty:
             fig.add_trace(go.Scatter(x=avg["mes_label"], y=avg["valor_num"], mode="lines+markers", name="Média diária"))
-        fig.update_layout(height=320, margin=dict(l=20,r=20,t=30,b=20))
+        fig.update_layout(height=320)
+        fig = apply_plotly_theme(fig)
         plot(fig, f"{unidade}_pacientes")
+
     with col2:
         grouped_bar(obitos, "Óbitos", prefix=f"{unidade}_obitos")
 
@@ -349,7 +821,12 @@ def render_generic(df, unidade, paineis):
     for i,painel in enumerate(paineis, start=1):
         grouped_bar(filter_panel(df, unidade, painel), painel.title(), prefix=f"{unidade}_{i}")
 
-st.title("📊 BI Município - Indicadores Assistenciais")
+st.markdown("""
+<h1 style="margin-bottom:0;">📊 BI Município</h1>
+<p style="margin-top:0; color:#64748B; font-size:16px;">
+Painel executivo de indicadores assistenciais
+</p>
+""", unsafe_allow_html=True)
 uploaded = st.sidebar.file_uploader("Planilha base (.xlsx)", type=["xlsx"])
 data, source_name = load_workbook_data(uploaded.getvalue()) if uploaded else load_workbook_data(None)
 
@@ -364,10 +841,21 @@ if data.empty:
     st.stop()
 
 st.sidebar.success(f"Fonte: {source_name}")
-pagina = st.sidebar.radio("Página", ["UPA Luziânia","UPA Jardim Ingá","HMJI","Atenção Secundária","Saúde Mental","Atenção Primária"])
-meses_selecionados = st.sidebar.multiselect("Período", [MESES_LABEL[m] for m in MESES], default=[MESES_LABEL[m] for m in MESES])
+st.sidebar.markdown("## Navegação")
+pagina = st.sidebar.radio(
+    "Selecione a página",
+    ["UPA Luziânia", "UPA Jardim Ingá", "HMJI", "Atenção Secundária", "Saúde Mental", "Atenção Primária"]
+)
+
+st.sidebar.markdown("## Filtros")
+meses_selecionados = st.sidebar.multiselect(
+    "Período",
+    [MESES_LABEL[m] for m in MESES],
+    default=[MESES_LABEL[m] for m in MESES]
+)
 if meses_selecionados:
     data = data[data["mes_label"].isin(meses_selecionados)].copy()
+hero_header(pagina, source_name, meses_selecionados)
 
 if pagina == "UPA Luziânia":
     render_upa_page(data, "UPA DE LUZIÂNIA - UPA II")
