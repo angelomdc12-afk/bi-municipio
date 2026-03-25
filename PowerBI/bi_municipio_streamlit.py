@@ -327,7 +327,33 @@ def format_int(x):
         return "-"
     return f"{int(round(x)):,}".replace(",", ".")
 
+def clean_card_value(value):
+    if value is None:
+        return "-"
+
+    value = str(value)
+
+    replacements = [
+        "<div style='",
+        '<div style="',
+        "</div>",
+        "<div>",
+        "</span>",
+        "<span>",
+        "&nbsp;"
+    ]
+    for item in replacements:
+        value = value.replace(item, "")
+
+    import re
+    value = re.sub(r"<[^>]+>", "", value)
+    value = re.sub(r"\s+", " ", value).strip()
+
+    return value if value else "-"
+
 def card(title, value, icon="📊", subtitle="Indicador consolidado"):
+    value = clean_card_value(value)
+
     st.markdown(f"""
     <div style="
         background: linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 100%);
