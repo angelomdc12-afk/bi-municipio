@@ -352,64 +352,63 @@ def clean_card_value(value):
     return value if value else "-"
 
 def card(title, value, icon="📊", subtitle="Indicador consolidado"):
-    value = clean_card_value(value)
-
-    st.markdown(f"""
-    <div style="
-        background: linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 100%);
-        border: 1px solid #E2E8F0;
-        border-radius: 20px;
-        padding: 18px 18px 16px 18px;
-        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
-        min-height: 130px;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-    ">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">
-            <div>
-                <div style="
-                    font-size: 13px;
-                    font-weight: 600;
-                    color: #64748B;
-                    text-transform: uppercase;
-                    letter-spacing: 0.5px;
-                    margin-bottom: 6px;
-                ">
-                    {title}
-                </div>
-                <div style="
-                    font-size: 12px;
-                    color: #94A3B8;
-                ">
-                    {subtitle}
-                </div>
+    html = f"""
+<div style="
+    background: linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 100%);
+    border: 1px solid #E2E8F0;
+    border-radius: 20px;
+    padding: 18px 18px 16px 18px;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+    min-height: 130px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">
+        <div>
+            <div style="
+                font-size: 13px;
+                font-weight: 600;
+                color: #64748B;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-bottom: 6px;
+            ">
+                {title}
             </div>
             <div style="
-                width: 42px;
-                height: 42px;
-                border-radius: 12px;
-                background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%);
-                display:flex;
-                align-items:center;
-                justify-content:center;
-                font-size: 20px;
+                font-size: 12px;
+                color: #94A3B8;
             ">
-                {icon}
+                {subtitle}
             </div>
         </div>
-
         <div style="
-            font-size: 32px;
-            font-weight: 800;
-            color: #0F172A;
-            line-height: 1;
-            margin-top: 8px;
+            width: 42px;
+            height: 42px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%);
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            font-size: 20px;
         ">
-            {value}
+            {icon}
         </div>
     </div>
-    """, unsafe_allow_html=True)
+
+    <div style="
+        font-size: 32px;
+        font-weight: 800;
+        color: #0F172A;
+        line-height: 1;
+        margin-top: 8px;
+    ">
+        {value}
+    </div>
+</div>
+"""
+    st.markdown(html, unsafe_allow_html=True)
 def section_start(title, subtitle=""):
     st.markdown(
         f"""
