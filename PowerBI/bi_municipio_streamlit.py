@@ -380,7 +380,7 @@ def card(title, value, icon="📊", subtitle="Indicador consolidado"):
             line-height: 1;
             margin-top: 8px;
         ">
-            {value}
+            {valor, unsafe_allow_html=True }
         </div>
     </div>
     """, unsafe_allow_html=True)
