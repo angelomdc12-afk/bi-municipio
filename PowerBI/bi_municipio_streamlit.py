@@ -498,38 +498,39 @@ def card(
 
     # ----- META -----
     meta_html = ""
-    if meta_value is not None and not pd.isna(meta_value):
-        numeric_value = pd.to_numeric(str(value).replace(".", "").replace(",", "."), errors="coerce")
-        if pd.notna(numeric_value):
-            meta_ok = numeric_value >= meta_value
-            meta_bg = "#ECFDF5" if meta_ok else "#FFF7ED"
-            meta_color = "#166534" if meta_ok else "#C2410C"
-            meta_border = "#BBF7D0" if meta_ok else "#FED7AA"
-            meta_label = f"Meta: {format_int(meta_value)}"
-            meta_status = "atingida" if meta_ok else "abaixo"
-            meta_html = f"""
-                <div style="
-                    display:inline-flex;
-                    align-items:center;
-                    gap:6px;
-                    padding:6px 10px;
-                    border-radius:999px;
-                    background:{meta_bg};
-                    border:1px solid {meta_border};
-                    color:{meta_color};
-                    font-size:12px;
-                    font-weight:700;
-                    white-space:nowrap;
-                ">
-                    🎯 {meta_label} · {meta_status}
-                </div>
-            """
+    numeric_value = pd.to_numeric(str(value).replace(".", "").replace(",", "."), errors="coerce")
+
+    if meta_value is not None and not pd.isna(meta_value) and pd.notna(numeric_value):
+        meta_ok = numeric_value >= meta_value
+        meta_bg = "#ECFDF5" if meta_ok else "#FFF7ED"
+        meta_color = "#166534" if meta_ok else "#C2410C"
+        meta_border = "#BBF7D0" if meta_ok else "#FED7AA"
+        meta_label = f"Meta: {format_int(meta_value)}"
+        meta_status = "atingida" if meta_ok else "abaixo"
+
+        meta_html = f"""
+            <div style="
+                display:inline-flex;
+                align-items:center;
+                gap:6px;
+                padding:6px 10px;
+                border-radius:999px;
+                background:{meta_bg};
+                border:1px solid {meta_border};
+                color:{meta_color};
+                font-size:12px;
+                font-weight:700;
+                white-space:nowrap;
+            ">
+                🎯 {meta_label} · {meta_status}
+            </div>
+        """
 
     footer_html = ""
     if footer_text:
         footer_html = f"""
             <div style="
-                margin-top:12px;
+                margin-top:14px;
                 padding-top:10px;
                 border-top:1px solid #E2E8F0;
                 font-size:12px;
@@ -545,7 +546,7 @@ def card(
         background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
         border: 1px solid #E2E8F0;
         border-radius: 22px;
-        padding: 18px 18px 16px 18px;
+        padding: 18px;
         box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
         min-height: 185px;
         display: flex;
@@ -553,7 +554,13 @@ def card(
         justify-content: space-between;
     ">
         <div>
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px;">
+            <div style="
+                display:flex;
+                justify-content:space-between;
+                align-items:flex-start;
+                gap:12px;
+                margin-bottom:12px;
+            ">
                 <div>
                     <div style="
                         font-size:12px;
@@ -565,6 +572,7 @@ def card(
                     ">
                         {title}
                     </div>
+
                     <div style="
                         font-size:12px;
                         color:#94A3B8;
@@ -599,7 +607,11 @@ def card(
                 {value}
             </div>
 
-            <div style="display:flex; flex-wrap:wrap; gap:8px;">
+            <div style="
+                display:flex;
+                flex-wrap:wrap;
+                gap:8px;
+            ">
                 <div style="
                     display:inline-flex;
                     align-items:center;
