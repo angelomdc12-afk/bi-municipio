@@ -473,7 +473,10 @@ def card(
     meta_value=None,
     footer_text=None
 ):
+    raw_value = value
     value = clean_card_value(value)
+    title = clean_card_value(title)
+    subtitle = clean_card_value(subtitle)
 
     # ----- DELTA -----
     if delta_pct is None:
@@ -498,7 +501,7 @@ def card(
 
     # ----- META -----
     meta_html = ""
-    numeric_value = pd.to_numeric(str(value).replace(".", "").replace(",", "."), errors="coerce")
+    numeric_value = pd.to_numeric(raw_value, errors="coerce")
 
     if meta_value is not None and not pd.isna(meta_value) and pd.notna(numeric_value):
         meta_ok = numeric_value >= meta_value
