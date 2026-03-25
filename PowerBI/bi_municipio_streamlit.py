@@ -351,31 +351,278 @@ def clean_card_value(value):
 
     return value if value else "-"
 
-def card(title, value, icon="📊", subtitle="Indicador consolidado"):
+
+def metric_sum(df, serie_norm=None, exclude_series_norm=None, month=None):
+    work = df.copy()
+
+    if month is not None:
+        work = work[work["mes"] == month]
+
+    if serie_norm is not None:
+        if isinstance(serie_norm, str):
+            serie_norm = [serie_norm]
+        serie_norm = [str(x).strip().upper() for x in serie_norm]
+        work = work[work["serie_norm"].isin(serie_norm)]
+
+    if exclude_series_norm is not None:
+        if isinstance(exclude_series_norm, str):
+            exclude_series_norm = [exclude_series_norm]
+        exclude_series_norm = [str(x).strip().upper() for x in exclude_series_norm]
+        work = work[~work["serie_norm"].isin(exclude_series_norm)]
+
+    work = work.dropna(subset=["valor_num"])
+
+    if work.empty:
+        return None
+
+    return float(work["valor_num"].sum())
+
+
+def latest_and_previous_month(df, serie_norm=None, exclude_series_norm=None):
+    work = df.copy()
+
+    if serie_norm is not None:
+        if isinstance(serie_norm, str):
+            serie_norm = [serie_norm]
+        serie_norm = [str(x).strip().upper() for x in serie_norm]
+        work = work[work["serie_norm"].isin(serie_norm)]
+
+    if exclude_series_norm is not None:
+        if isinstance(exclude_series_norm, str):
+            exclude_series_norm = [exclude_series_norm]
+        exclude_series_norm = [str(x).strip().upper() for x in exclude_series_norm]
+        work = work[~work["serie_norm"].isin(exclude_series_norm)]
+
+    work = work.dropna(subset=["mes", "valor_num"]).sort_values("mes")
+
+    if work.empty:
+        return None, None
+
+    months = []
+    for m in work["mes"].tolist():
+        if m not in months:
+            months.append(m)
+
+    latest = months[-1] if months else None
+    previous = months[-2] if len(months) >= 2 else None
+    return latest, previous
+
+
+def calc_delta_pct(current, previous):
+    if current is None or previous is None:
+        return None
+    if pd.isna(current) or pd.isna(previous):
+        return None
+    if previous == 0:
+        return None
+    return ((current - previous) / previous) * 100
+
+
+def build_kpi_context(df, serie_norm=None, exclude_series_norm=None, meta_series="META"):
+    latest_month, previous_month = latest_and_previous_month(
+        df,
+        serie_norm=serie_norm,
+        exclude_series_norm=exclude_series_norm
+    )
+
+    current_value = metric_sum(
+        df,
+        serie_norm=serie_norm,
+        exclude_series_norm=exclude_series_norm,
+        month=latest_month
+    )
+
+    previous_value = metric_sum(
+        df,
+        serie_norm=serie_norm,
+        exclude_series_norm=exclude_series_norm,
+        month=previous_month
+    )
+
+    total_value = metric_sum(
+        df,
+        serie_norm=serie_norm,
+        exclude_series_norm=exclude_series_norm
+    )
+
+    meta_value = metric_sum(
+        df,
+        serie_norm=meta_series,
+        month=latest_month
+    )
+
+    return {
+        "latest_month": latest_month,
+        "previous_month": previous_month,
+        "latest_month_label": MESES_LABEL.get(latest_month, str(latest_month) if latest_month else "-"),
+        "current": current_value,
+        "previous": previous_value,
+        "total": total_value,
+        "meta": meta_value,
+        "delta_pct": calc_delta_pct(current_value, previous_value),
+    }
+
+
+def card(
+    title,
+    value,
+    icon="📊",
+    subtitle="Indicador consolidado",
+    delta_pct=None,
+    delta_good_when="up",
+    meta_value=None,
+    footer_text=None
+):
     value = clean_card_value(value)
 
-    html = (
-        '<div style="'
-        'background: linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 100%);'
-        'border: 1px solid #E2E8F0;'
-        'border-radius: 20px;'
-        'padding: 18px 18px 16px 18px;'
-        'box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);'
-        'min-height: 130px;'
-        'display: flex;'
-        'flex-direction: column;'
-        'justify-content: space-between;'
-        '">'
-            '<div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">'
-                '<div>'
-                    f'<div style="font-size: 13px; font-weight: 600; color: #64748B; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{title}</div>'
-                    f'<div style="font-size: 12px; color: #94A3B8;">{subtitle}</div>'
-                '</div>'
-                f'<div style="width: 42px; height: 42px; border-radius: 12px; background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%); display:flex; align-items:center; justify-content:center; font-size: 20px;">{icon}</div>'
-            '</div>'
-            f'<div style="font-size: 32px; font-weight: 800; color: #0F172A; line-height: 1; margin-top: 8px;">{value}</div>'
-        '</div>'
-    )
+    # ----- DELTA -----
+    if delta_pct is None:
+        delta_text = "Sem base comparativa"
+        delta_bg = "#F8FAFC"
+        delta_color = "#64748B"
+        delta_border = "#E2E8F0"
+    else:
+        if delta_pct > 0:
+            arrow = "↑"
+        elif delta_pct < 0:
+            arrow = "↓"
+        else:
+            arrow = "→"
+
+        is_good = delta_pct >= 0 if delta_good_when == "up" else delta_pct <= 0
+
+        delta_text = f"{arrow} {abs(delta_pct):.1f}% vs mês anterior"
+        delta_bg = "#ECFDF5" if is_good else "#FEF2F2"
+        delta_color = "#166534" if is_good else "#B91C1C"
+        delta_border = "#BBF7D0" if is_good else "#FECACA"
+
+    # ----- META -----
+    meta_html = ""
+    if meta_value is not None and not pd.isna(meta_value):
+        numeric_value = pd.to_numeric(str(value).replace(".", "").replace(",", "."), errors="coerce")
+        if pd.notna(numeric_value):
+            meta_ok = numeric_value >= meta_value
+            meta_bg = "#ECFDF5" if meta_ok else "#FFF7ED"
+            meta_color = "#166534" if meta_ok else "#C2410C"
+            meta_border = "#BBF7D0" if meta_ok else "#FED7AA"
+            meta_label = f"Meta: {format_int(meta_value)}"
+            meta_status = "atingida" if meta_ok else "abaixo"
+            meta_html = f"""
+                <div style="
+                    display:inline-flex;
+                    align-items:center;
+                    gap:6px;
+                    padding:6px 10px;
+                    border-radius:999px;
+                    background:{meta_bg};
+                    border:1px solid {meta_border};
+                    color:{meta_color};
+                    font-size:12px;
+                    font-weight:700;
+                    white-space:nowrap;
+                ">
+                    🎯 {meta_label} · {meta_status}
+                </div>
+            """
+
+    footer_html = ""
+    if footer_text:
+        footer_html = f"""
+            <div style="
+                margin-top:12px;
+                padding-top:10px;
+                border-top:1px solid #E2E8F0;
+                font-size:12px;
+                color:#64748B;
+                font-weight:600;
+            ">
+                {footer_text}
+            </div>
+        """
+
+    html = f"""
+    <div style="
+        background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
+        border: 1px solid #E2E8F0;
+        border-radius: 22px;
+        padding: 18px 18px 16px 18px;
+        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+        min-height: 185px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+    ">
+        <div>
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px;">
+                <div>
+                    <div style="
+                        font-size:12px;
+                        font-weight:800;
+                        color:#64748B;
+                        text-transform:uppercase;
+                        letter-spacing:0.7px;
+                        margin-bottom:5px;
+                    ">
+                        {title}
+                    </div>
+                    <div style="
+                        font-size:12px;
+                        color:#94A3B8;
+                        font-weight:500;
+                    ">
+                        {subtitle}
+                    </div>
+                </div>
+
+                <div style="
+                    width:46px;
+                    height:46px;
+                    border-radius:14px;
+                    background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%);
+                    display:flex;
+                    align-items:center;
+                    justify-content:center;
+                    font-size:21px;
+                    flex-shrink:0;
+                ">
+                    {icon}
+                </div>
+            </div>
+
+            <div style="
+                font-size:34px;
+                font-weight:800;
+                color:#0F172A;
+                line-height:1;
+                margin-bottom:14px;
+            ">
+                {value}
+            </div>
+
+            <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                <div style="
+                    display:inline-flex;
+                    align-items:center;
+                    gap:6px;
+                    padding:6px 10px;
+                    border-radius:999px;
+                    background:{delta_bg};
+                    border:1px solid {delta_border};
+                    color:{delta_color};
+                    font-size:12px;
+                    font-weight:700;
+                    white-space:nowrap;
+                ">
+                    {delta_text}
+                </div>
+
+                {meta_html}
+            </div>
+        </div>
+
+        {footer_html}
+    </div>
+    """
 
     st.markdown(html, unsafe_allow_html=True)
 def section_start(title, subtitle=""):
@@ -586,6 +833,10 @@ def render_upa_page(df, unidade):
     faixa = filter_panel(df, unidade, "ATENDIMENTOS DIVIDIDOS POR FAIXA ETARIA")
     origem = filter_panel(df, unidade, "ATENDIMENTOS DE  PACIENTES")
     obitos = filter_panel(df, unidade, "ÓBITOS")
+    recep_ctx = build_kpi_context(recep, serie_norm="PACIENTES RECEPCIONADOS")
+    atend_ctx = build_kpi_context(atend_med, serie_norm="ATENDIMENTOS MÉDICOS")
+    obitos_ctx = build_kpi_context(obitos)
+    exames_ctx = build_kpi_context(exames, exclude_series_norm="TOTAL")
 
     section_start("Resumo executivo", "Visão consolidada dos principais indicadores da unidade")
     c1, c2, c3, c4 = st.columns(4)
@@ -593,33 +844,49 @@ def render_upa_page(df, unidade):
     with c1:
         card(
             "Pacientes recepcionados",
-            format_int(recep["valor_num"].sum()),
+            format_int(recep_ctx["current"]),
             icon="👥",
-            subtitle="Volume total no período"
+            subtitle=f"Último mês selecionado • {recep_ctx['latest_month_label']}",
+            delta_pct=recep_ctx["delta_pct"],
+            delta_good_when="up",
+            meta_value=recep_ctx["meta"],
+            footer_text=f"Acumulado no período: {format_int(recep_ctx['total'])}"
         )
 
     with c2:
         card(
             "Atendimentos médicos",
-            format_int(atend_med[atend_med["serie_norm"] == "ATENDIMENTOS MÉDICOS"]["valor_num"].sum()),
+            format_int(atend_ctx["current"]),
             icon="🩺",
-            subtitle="Produção médica consolidada"
+            subtitle=f"Último mês selecionado • {atend_ctx['latest_month_label']}",
+            delta_pct=atend_ctx["delta_pct"],
+            delta_good_when="up",
+            meta_value=atend_ctx["meta"],
+            footer_text=f"Acumulado no período: {format_int(atend_ctx['total'])}"
         )
 
     with c3:
         card(
             "Óbitos",
-            format_int(obitos["valor_num"].sum()),
+            format_int(obitos_ctx["current"]),
             icon="⚠️",
-            subtitle="Ocorrências registradas"
+            subtitle=f"Último mês selecionado • {obitos_ctx['latest_month_label']}",
+            delta_pct=obitos_ctx["delta_pct"],
+            delta_good_when="down",
+            meta_value=None,
+            footer_text=f"Acumulado no período: {format_int(obitos_ctx['total'])}"
         )
 
     with c4:
         card(
             "Exames internos",
-            format_int(exames[~exames["serie_norm"].eq("TOTAL")]["valor_num"].sum()),
+            format_int(exames_ctx["current"]),
             icon="🧪",
-            subtitle="Procedimentos realizados"
+            subtitle=f"Último mês selecionado • {exames_ctx['latest_month_label']}",
+            delta_pct=exames_ctx["delta_pct"],
+            delta_good_when="up",
+            meta_value=None,
+            footer_text=f"Acumulado no período: {format_int(exames_ctx['total'])}"
         )
     section_end()
 
@@ -761,31 +1028,46 @@ def render_hmji(df):
     exames = filter_panel(df, unidade, "EXAMES INTERNOS")
     cir = filter_panel(df, unidade, "PROCEDIMENTOS CIRÚRGICOS")
     anes = filter_panel(df, unidade, "ANESTESIAS")
+    clin_ctx = build_kpi_context(clin, serie_norm="PACIENTES CLÍNICOS ATENDIDOS")
+    obitos_ctx = build_kpi_context(obitos)
+    cir_ctx = build_kpi_context(cir)
 
     c1, c2, c3 = st.columns(3)
 
     with c1:
         card(
             "Pacientes clínicos",
-            format_int(clin[clin["serie_norm"] == "PACIENTES CLÍNICOS ATENDIDOS"]["valor_num"].sum()),
+            format_int(clin_ctx["current"]),
             icon="🏥",
-            subtitle="Atendimentos no período"
+            subtitle=f"Último mês selecionado • {clin_ctx['latest_month_label']}",
+            delta_pct=clin_ctx["delta_pct"],
+            delta_good_when="up",
+            meta_value=clin_ctx["meta"],
+            footer_text=f"Acumulado no período: {format_int(clin_ctx['total'])}"
         )
 
     with c2:
         card(
             "Óbitos",
-            format_int(obitos["valor_num"].sum()),
+            format_int(obitos_ctx["current"]),
             icon="⚠️",
-            subtitle="Eventos registrados"
+            subtitle=f"Último mês selecionado • {obitos_ctx['latest_month_label']}",
+            delta_pct=obitos_ctx["delta_pct"],
+            delta_good_when="down",
+            meta_value=None,
+            footer_text=f"Acumulado no período: {format_int(obitos_ctx['total'])}"
         )
 
     with c3:
         card(
             "Procedimentos cirúrgicos",
-            format_int(cir["valor_num"].sum()),
+            format_int(cir_ctx["current"]),
             icon="🩹",
-            subtitle="Produção cirúrgica"
+            subtitle=f"Último mês selecionado • {cir_ctx['latest_month_label']}",
+            delta_pct=cir_ctx["delta_pct"],
+            delta_good_when="up",
+            meta_value=cir_ctx["meta"],
+            footer_text=f"Acumulado no período: {format_int(cir_ctx['total'])}"
         )
 
     col1, col2 = st.columns(2)
