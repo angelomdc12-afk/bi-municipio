@@ -462,6 +462,56 @@ def build_kpi_context(df, serie_norm=None, exclude_series_norm=None, meta_series
         "delta_pct": calc_delta_pct(current_value, previous_value),
     }
 
+def format_delta_pct(delta):
+    if delta is None or pd.isna(delta):
+        return "—"
+    return f"{delta:+.1f}%".replace(".", ",")
+
+def delta_arrow(delta):
+    if delta is None or pd.isna(delta):
+        return "•"
+    if delta > 0:
+        return "↑"
+    if delta < 0:
+        return "↓"
+    return "→"
+
+def delta_color(delta, inverse=False):
+    """
+    inverse=False: maior é melhor
+    inverse=True: menor é melhor
+    """
+    if delta is None or pd.isna(delta):
+        return SEMANTIC_COLORS["neutral"]
+
+    if inverse:
+        if delta < 0:
+            return SEMANTIC_COLORS["success"]
+        if delta > 0:
+            return SEMANTIC_COLORS["danger"]
+        return SEMANTIC_COLORS["warning"]
+
+    if delta > 0:
+        return SEMANTIC_COLORS["success"]
+    if delta < 0:
+        return SEMANTIC_COLORS["danger"]
+    return SEMANTIC_COLORS["warning"]
+
+def format_meta_line(current=None, meta=None):
+    if current is None or meta is None or pd.isna(current) or pd.isna(meta):
+        return "Meta: —"
+
+    diff = current - meta
+    status = "acima"
+    if diff < 0:
+        status = "abaixo"
+    elif diff == 0:
+        status = "em linha"
+
+    return (
+        f"Meta: {clean_card_value(meta)}"
+        f" • {status} em {clean_card_value(abs(diff)) if diff != 0 else '0'}"
+    )
 
 def card(title, value, icon="📊", subtitle="Indicador consolidado"):
     value = clean_card_value(value)
@@ -514,72 +564,226 @@ def hero_header(page_title, source_name, meses_selecionados):
     data_ref = dt.datetime.now().strftime("%d/%m/%Y %H:%M")
 
     st.markdown(
-        f"""
-        <div class="hero-wrap">
-            <div class="hero-title">BI Município</div>
-            <div class="hero-subtitle">
-                Painel executivo de indicadores assistenciais 
-            </div>
-            <div class="hero-chip-row">
-                <div class="hero-chip">Página: {page_title}</div>
-                <div class="hero-chip">Período: {periodo}</div>
-                <div class="hero-chip">Fonte: {source_name}</div>
-                <div class="hero-chip">Atualizado em: {data_ref}</div>
-            </div>
-        </div>
+        """
+        <style>
+        .hero-wrap {
+            background: linear-gradient(135deg, #0F172A 0%, #12324A 50%, #0F6CBD 100%);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 24px;
+            padding: 1.15rem 1.25rem;
+            margin-top: 0.2rem;
+            margin-bottom: 1.1rem;
+            box-shadow: 0 16px 36px rgba(15, 23, 42, 0.16);
+        }
+
+        .hero-title {
+            color: #FFFFFF;
+            font-size: 1.9rem;
+            font-weight: 800;
+            letter-spacing: -0.8px;
+            margin-bottom: 0.2rem;
+        }
+
+        .hero-subtitle {
+            color: rgba(255,255,255,0.82);
+            font-size: 0.98rem;
+            margin-bottom: 1rem;
+        }
+
+        .hero-chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .hero-chip {
+            background: rgba(255,255,255,0.12);
+            color: #FFFFFF;
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 999px;
+            padding: 0.42rem 0.78rem;
+            font-size: 0.82rem;
+            font-weight: 600;
+            backdrop-filter: blur(6px);
+        }
+
+        .logo-slot {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            padding-top: 0.35rem;
+        }
+        .logo-left {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            margin-top: 80px;
+        }
+        </style>
         """,
         unsafe_allow_html=True
     )
 
-APP_COLORS = {
+    col1, col2, col3 = st.columns([1.2, 6, 1.2])
+
+    with col1:
+        st.markdown('<div class="logo-left">', unsafe_allow_html=True)
+        try:
+            st.image("assets/patris.png", width=315)
+        except Exception:
+            st.empty()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with col2:
+        st.markdown(
+            f"""
+            <div class="hero-wrap">
+                <div class="hero-title">BI Município</div>
+                <div class="hero-subtitle">
+                    Painel executivo de indicadores assistenciais
+                </div>
+                <div class="hero-chip-row">
+                    <div class="hero-chip">Página: {page_title}</div>
+                    <div class="hero-chip">Período: {periodo}</div>
+                    <div class="hero-chip">Fonte: {source_name}</div>
+                    <div class="hero-chip">Atualizado em: {data_ref}</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with col3:
+        st.markdown('<div class="logo-slot">', unsafe_allow_html=True)
+        try:
+            st.image("assets/prefeitura.png", width=315)
+        except Exception:
+            st.empty()
+        st.markdown("</div>", unsafe_allow_html=True)
+SEMANTIC_COLORS = {
+    # identidade base
     "primary": "#0F6CBD",
     "primary_soft": "#93C5FD",
     "secondary": "#0F172A",
+
+    # estados
     "success": "#16A34A",
     "warning": "#F59E0B",
     "danger": "#DC2626",
     "neutral": "#64748B",
-    "grid": "rgba(148,163,184,0.16)",
-    "axis": "#94A3B8",
-    "text": "#CAD2DD",
-    "title": "#F6FBFA",
-    "plot_bg": "#0F172A",
-}
+    "info": "#0891B2",
 
-DEFAULT_CHART_COLORS = [
-    "#0F6CBD",  # azul principal
-    "#16A34A",  # verde
-    "#F59E0B",  # amarelo
-    "#DC2626",  # vermelho
-    "#7C3AED",  # roxo
-    "#0891B2",  # azul secundário
-    "#64748B"   # neutro
-]
+    # leitura executiva
+    "realizado": "#0F6CBD",
+    "realizado_soft": "#93C5FD",
+    "media": "#38BDF8",
+    "meta": "#94A3B8",
+    "alerta": "#DC2626",
+    "bom": "#16A34A",
+    "atencao": "#F59E0B",
+    "critico": "#DC2626",
 
-APP_COLORS = {
-    "primary": "#0F6CBD",
-    "primary_soft": "#93C5FD",
-    "secondary": "#0F172A",
-    "success": "#16A34A",
-    "warning": "#F59E0B",
-    "danger": "#DC2626",
-    "neutral": "#64748B",
+    # apoio visual
     "grid": "rgba(148,163,184,0.14)",
     "axis": "#94A3B8",
     "text": "#CFD7E2",
     "title": "#F6F7FB",
     "plot_bg": "#0F172A",
+
+    # séries neutras
+    "series_1": "#0F6CBD",
+    "series_2": "#16A34A",
+    "series_3": "#F59E0B",
+    "series_4": "#DC2626",
+    "series_5": "#7C3AED",
+    "series_6": "#0891B2",
+    "series_7": "#64748B",
+}
+
+APP_COLORS = {
+    "primary": SEMANTIC_COLORS["primary"],
+    "primary_soft": SEMANTIC_COLORS["primary_soft"],
+    "secondary": SEMANTIC_COLORS["secondary"],
+    "success": SEMANTIC_COLORS["success"],
+    "warning": SEMANTIC_COLORS["warning"],
+    "danger": SEMANTIC_COLORS["danger"],
+    "neutral": SEMANTIC_COLORS["neutral"],
+    "grid": SEMANTIC_COLORS["grid"],
+    "axis": SEMANTIC_COLORS["axis"],
+    "text": SEMANTIC_COLORS["text"],
+    "title": SEMANTIC_COLORS["title"],
+    "plot_bg": SEMANTIC_COLORS["plot_bg"],
 }
 
 DEFAULT_CHART_COLORS = [
-    "#0F6CBD",
-    "#16A34A",
-    "#F59E0B",
-    "#DC2626",
-    "#7C3AED",
-    "#0891B2",
-    "#64748B"
+    SEMANTIC_COLORS["series_1"],
+    SEMANTIC_COLORS["series_2"],
+    SEMANTIC_COLORS["series_3"],
+    SEMANTIC_COLORS["series_4"],
+    SEMANTIC_COLORS["series_5"],
+    SEMANTIC_COLORS["series_6"],
+    SEMANTIC_COLORS["series_7"],
 ]
+
+def semantic_color(name, default=None):
+    if not name:
+        return default or SEMANTIC_COLORS["neutral"]
+
+    key = str(name).strip().upper()
+
+    # meta / referência
+    if "META" in key:
+        return SEMANTIC_COLORS["meta"]
+
+    # médias
+    if "MÉDIA" in key or "MEDIA" in key:
+        return SEMANTIC_COLORS["media"]
+
+    # alertas / eventos críticos
+    if "ÓBITO" in key or "OBITO" in key:
+        return SEMANTIC_COLORS["danger"]
+
+    # risco
+    if key in RISK_COLORS:
+        return RISK_COLORS[key]
+
+    # séries principais comuns
+    if "ATENDIMENTOS MÉDICOS" in key:
+        return SEMANTIC_COLORS["realizado"]
+
+    if "PACIENTES RECEPCIONADOS" in key:
+        return SEMANTIC_COLORS["realizado_soft"]
+
+    if "MÉDIA GERAL" in key or "MEDIA GERAL" in key:
+        return SEMANTIC_COLORS["media"]
+
+    return default or SEMANTIC_COLORS["neutral"]
+
+def build_semantic_color_map(series_list):
+    palette = [
+        SEMANTIC_COLORS["series_1"],
+        SEMANTIC_COLORS["series_2"],
+        SEMANTIC_COLORS["series_3"],
+        SEMANTIC_COLORS["series_4"],
+        SEMANTIC_COLORS["series_5"],
+        SEMANTIC_COLORS["series_6"],
+        SEMANTIC_COLORS["series_7"],
+    ]
+
+    color_map = {}
+    fallback_idx = 0
+
+    for serie in series_list:
+        forced = semantic_color(serie, default=None)
+        if forced is not None and forced != SEMANTIC_COLORS["neutral"]:
+            color_map[serie] = forced
+        else:
+            color_map[serie] = palette[fallback_idx % len(palette)]
+            fallback_idx += 1
+
+    return color_map
 
 def apply_plotly_theme(
     fig,
@@ -618,7 +822,7 @@ def apply_plotly_theme(
         ),
         colorway=DEFAULT_CHART_COLORS,
         height=height,
-        margin=dict(l=30, r=18, t=78, b=44),
+        margin=dict(l=30, r=18, t=78, b=72),
         hoverlabel=dict(
             bgcolor="#FFFFFF",
             bordercolor="#CBD5E1",
@@ -635,16 +839,17 @@ def apply_plotly_theme(
     except Exception:
         first_x_len = 0
 
-    auto_tick_angle = 0 if first_x_len <= 6 else -30
+    auto_tick_angle = 0 if first_x_len <= 5 else -45
 
     fig.update_xaxes(
         title_text="",
         showgrid=False,
         showline=False,
         zeroline=False,
-        tickfont=dict(color="#64748B", size=11),
+        tickfont=dict(color="#64748B", size=10.5),
         tickangle=auto_tick_angle if tick_angle == 0 else tick_angle,
-        automargin=True
+        automargin=True,
+        ticklabeloverflow="allow"
     )
 
     fig.update_yaxes(
@@ -690,6 +895,36 @@ def chart_subtitle(df, unidade=None):
         return f"{unidade} • {periodo_txt}"
     return periodo_txt
 
+def ordered_month_labels(df):
+    if df is None or df.empty or "mes" not in df.columns:
+        return []
+
+    meses_validos = (
+        df["mes"]
+        .dropna()
+        .astype(str)
+        .unique()
+        .tolist()
+    )
+
+    meses_ordenados = [m for m in MESES if m in meses_validos]
+    return [MESES_LABEL.get(m, m) for m in meses_ordenados]
+
+
+def apply_month_axis_order(fig, df):
+    ordered_labels = ordered_month_labels(df)
+    if not ordered_labels:
+        return fig
+
+    fig.update_xaxes(
+        type="category",
+        categoryorder="array",
+        categoryarray=ordered_labels,
+        tickmode="array",
+        tickvals=ordered_labels,
+        ticktext=ordered_labels
+    )
+    return fig
 
 def truncate_series_name(name, max_len=28):
     name = str(name)
@@ -719,46 +954,75 @@ def line_with_optional_meta(
     fig = go.Figure()
 
     if main_series:
-        main = work[work["serie_norm"] == main_series.upper()]
+        main = work[work["serie_norm"] == str(main_series).upper()]
         if not main.empty:
+            main_color = semantic_color(main_series, default=SEMANTIC_COLORS["realizado"])
+
             fig.add_trace(
                 go.Scatter(
                     x=main["mes_label"],
                     y=main["valor_num"],
                     mode="lines+markers",
-                    name=main_series.title(),
-                    line=dict(color=APP_COLORS["primary"], width=3.5),
-                    marker=dict(size=7, color=APP_COLORS["primary"]),
+                    name=str(main_series).title(),
+                    line=dict(color=main_color, width=3.5),
+                    marker=dict(size=7, color=main_color),
                     hovertemplate="<b>%{fullData.name}</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
                 )
             )
-    else:
-        series = work["serie"].dropna().unique().tolist()
-        for serie in series:
-            temp = work[work["serie"] == serie]
+
+        others = work[
+            (~work["serie_norm"].eq(str(main_series).upper())) &
+            (~work["serie_norm"].eq("META"))
+        ]
+
+        for serie in others["serie"].dropna().unique().tolist():
+            temp = others[others["serie"] == serie]
+            serie_color = semantic_color(serie, default=SEMANTIC_COLORS["neutral"])
+
             fig.add_trace(
                 go.Scatter(
                     x=temp["mes_label"],
                     y=temp["valor_num"],
                     mode="lines+markers",
                     name=str(serie),
-                    line=dict(width=2),
-                    marker=dict(size=5),
+                    line=dict(color=serie_color, width=2),
+                    marker=dict(size=5, color=serie_color),
                     opacity=0.65,
+                    hovertemplate="<b>%{fullData.name}</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
+                )
+            )
+    else:
+        series = work["serie"].dropna().unique().tolist()
+        color_map = build_semantic_color_map(series)
+
+        for serie in series:
+            temp = work[work["serie"] == serie]
+            serie_color = color_map.get(serie, SEMANTIC_COLORS["neutral"])
+
+            fig.add_trace(
+                go.Scatter(
+                    x=temp["mes_label"],
+                    y=temp["valor_num"],
+                    mode="lines+markers",
+                    name=str(serie),
+                    line=dict(color=serie_color, width=2.4),
+                    marker=dict(size=5.5, color=serie_color),
+                    opacity=0.9 if semantic_color(serie, default=None) else 0.72,
                     hovertemplate="<b>%{fullData.name}</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
                 )
             )
 
     meta = work[work["serie_norm"] == "META"]
     if not meta.empty:
+        meta_color = SEMANTIC_COLORS["meta"]
         fig.add_trace(
             go.Scatter(
                 x=meta["mes_label"],
                 y=meta["valor_num"],
                 mode="lines+markers",
                 name="Meta",
-                line=dict(color=APP_COLORS["neutral"], width=2, dash="dash"),
-                marker=dict(size=5, color=APP_COLORS["neutral"]),
+                line=dict(color=meta_color, width=2, dash="dash"),
+                marker=dict(size=5, color=meta_color),
                 hovertemplate="<b>Meta</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
             )
         )
@@ -772,6 +1036,8 @@ def line_with_optional_meta(
         legend=True,
         legend_orientation="h"
     )
+
+    fig = apply_month_axis_order(fig, work)
 
     plot(fig, prefix)
 
@@ -813,6 +1079,8 @@ def grouped_bar(
         legend=True,
         legend_orientation="h"
     )
+
+    fig = apply_month_axis_order(fig, work)
 
     plot(fig, prefix)
 
@@ -866,6 +1134,8 @@ def stacked_bar(
 
     if as_percent:
         fig.update_yaxes(range=[0, 100])
+
+    fig = apply_month_axis_order(fig, work)
 
     plot(fig, prefix)
 
@@ -1006,6 +1276,8 @@ def render_upa_page(df, unidade):
             legend_orientation="h"
         )
 
+        fig = apply_month_axis_order(fig, recep)
+
         plot(fig, f"{unidade}_recep_media")
     
     with col2:
@@ -1049,19 +1321,25 @@ def render_upa_page(df, unidade):
     med = tempo_med.dropna(subset=["valor_num"]).copy()
     fig = go.Figure()
 
-    for serie in med["serie"].dropna().unique():
+    series_med = med["serie"].dropna().unique().tolist()
+    med_color_map = build_semantic_color_map(series_med)
+
+    for serie in series_med:
         temp = med[med["serie"] == serie]
+        serie_color = semantic_color(serie, default=med_color_map.get(serie, SEMANTIC_COLORS["neutral"]))
+
         fig.add_trace(
             go.Scatter(
                 x=temp["mes_label"],
                 y=temp["valor_num"],
                 mode="lines+markers",
                 name=serie,
-                line=dict(width=2.5),
-                marker=dict(size=6)
+                line=dict(color=serie_color, width=3 if "MÉDIA GERAL" in str(serie).upper() or "MEDIA GERAL" in str(serie).upper() else 2.4),
+                marker=dict(size=6, color=serie_color),
+                opacity=1 if "MÉDIA GERAL" in str(serie).upper() or "MEDIA GERAL" in str(serie).upper() else 0.88,
+                hovertemplate="<b>%{fullData.name}</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
             )
-        )  
-
+        ) 
     fig = clean_trace_names(fig)
     fig = apply_plotly_theme(
         fig,
@@ -1072,6 +1350,9 @@ def render_upa_page(df, unidade):
         legend=True,
         legend_orientation="h"
     )
+
+    fig = apply_month_axis_order(fig, med)
+
     plot(fig, f"{unidade}_tempo_med_risco")
     section_end()
 
@@ -1190,6 +1471,7 @@ def render_hmji(df):
             fig.add_trace(go.Scatter(x=avg["mes_label"], y=avg["valor_num"], mode="lines+markers", name="Média diária"))
         fig.update_layout(height=320)
         fig = apply_plotly_theme(fig)
+        fig = apply_month_axis_order(fig, clin)
         plot(fig, f"{unidade}_pacientes")
 
     with col2:
@@ -1206,9 +1488,8 @@ def render_generic(df, unidade, paineis):
         grouped_bar(filter_panel(df, unidade, painel), painel.title(), prefix=f"{unidade}_{i}")
 
 st.markdown("""
-<h1 style="margin-bottom:0;">📊 BI Município</h1>
+<h1 style="margin-bottom:0;">
 <p style="margin-top:0; color:#64748B; font-size:16px;">
-Painel executivo de indicadores assistenciais
 </p>
 """, unsafe_allow_html=True)
 uploaded = st.sidebar.file_uploader("Planilha base (.xlsx)", type=["xlsx"])
