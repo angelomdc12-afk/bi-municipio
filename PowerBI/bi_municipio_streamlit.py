@@ -463,181 +463,31 @@ def build_kpi_context(df, serie_norm=None, exclude_series_norm=None, meta_series
     }
 
 
-def card(
-    title,
-    value,
-    icon="📊",
-    subtitle="Indicador consolidado",
-    delta_pct=None,
-    delta_good_when="up",
-    meta_value=None,
-    footer_text=None
-):
-    raw_value = value
+def card(title, value, icon="📊", subtitle="Indicador consolidado"):
     value = clean_card_value(value)
-    title = clean_card_value(title)
-    subtitle = clean_card_value(subtitle)
 
-    # ----- DELTA -----
-    if delta_pct is None:
-        delta_text = "Sem base comparativa"
-        delta_bg = "#F8FAFC"
-        delta_color = "#64748B"
-        delta_border = "#E2E8F0"
-    else:
-        if delta_pct > 0:
-            arrow = "↑"
-        elif delta_pct < 0:
-            arrow = "↓"
-        else:
-            arrow = "→"
-
-        is_good = delta_pct >= 0 if delta_good_when == "up" else delta_pct <= 0
-
-        delta_text = f"{arrow} {abs(delta_pct):.1f}% vs mês anterior"
-        delta_bg = "#ECFDF5" if is_good else "#FEF2F2"
-        delta_color = "#166534" if is_good else "#B91C1C"
-        delta_border = "#BBF7D0" if is_good else "#FECACA"
-
-    # ----- META -----
-    meta_html = ""
-    numeric_value = pd.to_numeric(raw_value, errors="coerce")
-
-    if meta_value is not None and not pd.isna(meta_value) and pd.notna(numeric_value):
-        meta_ok = numeric_value >= meta_value
-        meta_bg = "#ECFDF5" if meta_ok else "#FFF7ED"
-        meta_color = "#166534" if meta_ok else "#C2410C"
-        meta_border = "#BBF7D0" if meta_ok else "#FED7AA"
-        meta_label = f"Meta: {format_int(meta_value)}"
-        meta_status = "atingida" if meta_ok else "abaixo"
-
-        meta_html = f"""
-            <div style="
-                display:inline-flex;
-                align-items:center;
-                gap:6px;
-                padding:6px 10px;
-                border-radius:999px;
-                background:{meta_bg};
-                border:1px solid {meta_border};
-                color:{meta_color};
-                font-size:12px;
-                font-weight:700;
-                white-space:nowrap;
-            ">
-                🎯 {meta_label} · {meta_status}
-            </div>
-        """
-
-    footer_html = ""
-    if footer_text:
-        footer_html = f"""
-            <div style="
-                margin-top:14px;
-                padding-top:10px;
-                border-top:1px solid #E2E8F0;
-                font-size:12px;
-                color:#64748B;
-                font-weight:600;
-            ">
-                {footer_text}
-            </div>
-        """
-
-    html = f"""
-    <div style="
-        background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
-        border: 1px solid #E2E8F0;
-        border-radius: 22px;
-        padding: 18px;
-        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
-        min-height: 185px;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-    ">
-        <div>
-            <div style="
-                display:flex;
-                justify-content:space-between;
-                align-items:flex-start;
-                gap:12px;
-                margin-bottom:12px;
-            ">
-                <div>
-                    <div style="
-                        font-size:12px;
-                        font-weight:800;
-                        color:#64748B;
-                        text-transform:uppercase;
-                        letter-spacing:0.7px;
-                        margin-bottom:5px;
-                    ">
-                        {title}
-                    </div>
-
-                    <div style="
-                        font-size:12px;
-                        color:#94A3B8;
-                        font-weight:500;
-                    ">
-                        {subtitle}
-                    </div>
-                </div>
-
-                <div style="
-                    width:46px;
-                    height:46px;
-                    border-radius:14px;
-                    background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%);
-                    display:flex;
-                    align-items:center;
-                    justify-content:center;
-                    font-size:21px;
-                    flex-shrink:0;
-                ">
-                    {icon}
-                </div>
-            </div>
-
-            <div style="
-                font-size:34px;
-                font-weight:800;
-                color:#0F172A;
-                line-height:1;
-                margin-bottom:14px;
-            ">
-                {value}
-            </div>
-
-            <div style="
-                display:flex;
-                flex-wrap:wrap;
-                gap:8px;
-            ">
-                <div style="
-                    display:inline-flex;
-                    align-items:center;
-                    gap:6px;
-                    padding:6px 10px;
-                    border-radius:999px;
-                    background:{delta_bg};
-                    border:1px solid {delta_border};
-                    color:{delta_color};
-                    font-size:12px;
-                    font-weight:700;
-                    white-space:nowrap;
-                ">
-                    {delta_text}
-                </div>
-
-                {meta_html}
-            </div>
-        </div>
-
-        {footer_html}
-    </div>
-    """
+    html = (
+        '<div style="'
+        'background: linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 100%);'
+        'border: 1px solid #E2E8F0;'
+        'border-radius: 20px;'
+        'padding: 18px 18px 16px 18px;'
+        'box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);'
+        'min-height: 130px;'
+        'display: flex;'
+        'flex-direction: column;'
+        'justify-content: space-between;'
+        '">'
+            '<div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">'
+                '<div>'
+                    f'<div style="font-size: 13px; font-weight: 600; color: #64748B; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{title}</div>'
+                    f'<div style="font-size: 12px; color: #94A3B8;">{subtitle}</div>'
+                '</div>'
+                f'<div style="width: 42px; height: 42px; border-radius: 12px; background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%); display:flex; align-items:center; justify-content:center; font-size: 20px;">{icon}</div>'
+            '</div>'
+            f'<div style="font-size: 32px; font-weight: 800; color: #0F172A; line-height: 1; margin-top: 8px;">{value}</div>'
+        '</div>'
+    )
 
     st.markdown(html, unsafe_allow_html=True)
 def section_start(title, subtitle=""):
@@ -681,35 +531,166 @@ def hero_header(page_title, source_name, meses_selecionados):
         unsafe_allow_html=True
     )
 
-def apply_plotly_theme(fig):
+APP_COLORS = {
+    "primary": "#0F6CBD",
+    "primary_soft": "#93C5FD",
+    "secondary": "#0F172A",
+    "success": "#16A34A",
+    "warning": "#F59E0B",
+    "danger": "#DC2626",
+    "neutral": "#64748B",
+    "grid": "rgba(148,163,184,0.16)",
+    "axis": "#94A3B8",
+    "text": "#334155",
+    "title": "#0F172A",
+    "plot_bg": "#FFFFFF",
+}
+
+DEFAULT_CHART_COLORS = [
+    "#0F6CBD", "#16A34A", "#F59E0B", "#7C3AED", "#EF4444",
+    "#14B8A6", "#F97316", "#1D4ED8", "#E11D48", "#6B7280"
+]
+
+def apply_plotly_theme(
+    fig,
+    title=None,
+    subtitle=None,
+    yaxis_title="",
+    height=360,
+    legend=True,
+    legend_orientation="h",
+    tick_angle=0
+):
+    full_title = ""
+    if title:
+        full_title = f"<b>{title}</b>"
+        if subtitle:
+            full_title += f"<br><span style='font-size:12px; color:#64748B; font-weight:400'>{subtitle}</span>"
+
     fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="#FFFFFF",
-        font=dict(color="#334155", size=12),
-        title_font=dict(color="#0F172A", size=16),
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
+        title=dict(
+            text=full_title,
+            x=0.0,
             xanchor="left",
-            x=0
+            y=0.97,
+            yanchor="top"
         ),
-        margin=dict(l=20, r=20, t=45, b=20)
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor=APP_COLORS["plot_bg"],
+        font=dict(
+            family="Inter, Segoe UI, Arial, sans-serif",
+            color=APP_COLORS["text"],
+            size=12
+        ),
+        title_font=dict(
+            color=APP_COLORS["title"],
+            size=18
+        ),
+        colorway=DEFAULT_CHART_COLORS,
+        height=height,
+        margin=dict(l=28, r=18, t=78, b=42),
+        hoverlabel=dict(
+            bgcolor="#FFFFFF",
+            bordercolor="#CBD5E1",
+            font=dict(color="#0F172A", size=12)
+        ),
+        bargap=0.28,
+        bargroupgap=0.10
     )
+
     fig.update_xaxes(
+        title_text="",
         showgrid=False,
-        linecolor="#E2E8F0",
-        tickfont=dict(color="#64748B")
-    )
-    fig.update_yaxes(
-        gridcolor="rgba(148,163,184,0.20)",
+        showline=False,
         zeroline=False,
-        tickfont=dict(color="#64748B")
+        tickfont=dict(color="#64748B", size=11),
+        tickangle=tick_angle,
+        automargin=True
     )
+
+    fig.update_yaxes(
+        title_text=yaxis_title,
+        showgrid=True,
+        gridcolor=APP_COLORS["grid"],
+        gridwidth=1,
+        zeroline=False,
+        showline=False,
+        tickfont=dict(color="#64748B", size=11),
+        title_font=dict(color="#64748B", size=12),
+        automargin=True
+    )
+
+    if legend:
+        fig.update_layout(
+            showlegend=True,
+            legend=dict(
+                title="",
+                orientation=legend_orientation,
+                yanchor="bottom",
+                y=1.02,
+                xanchor="left",
+                x=0,
+                font=dict(size=11, color="#64748B"),
+                traceorder="normal"
+            )
+        )
+    else:
+        fig.update_layout(showlegend=False)
+
     return fig
-def line_with_optional_meta(df, title, main_series=None, unit_suffix="", prefix="line"):
-    st.markdown(f"**{title}**")
+def chart_subtitle(df, unidade=None):
+    meses = [m for m in df.get("mes_label", pd.Series(dtype=str)).dropna().unique().tolist()]
+    if not meses:
+        periodo_txt = "Sem período"
+    elif len(meses) == 1:
+        periodo_txt = meses[0]
+    else:
+        periodo_txt = f"{meses[0]} a {meses[-1]}"
+
+    if unidade:
+        return f"{unidade} • {periodo_txt}"
+    return periodo_txt
+
+
+def truncate_series_name(name, max_len=28):
+    name = str(name)
+    return name if len(name) <= max_len else name[:max_len-3] + "..."
+
+
+def clean_trace_names(fig):
+    for trace in fig.data:
+        current_name = getattr(trace, "name", None)
+
+        if current_name is None:
+            trace.name = ""
+            continue
+
+        name_str = str(current_name).strip()
+
+        if name_str.lower() == "undefined":
+            trace.name = ""
+        else:
+            trace.name = truncate_series_name(name_str)
+
+    return fig
+
+
+def smart_legend_visibility(df, max_series_horizontal=5):
+    n = df["serie"].dropna().nunique() if "serie" in df.columns else 0
+    return n > 1, ("h" if n <= max_series_horizontal else "h") 
+def line_with_optional_meta(
+    df,
+    title,
+    main_series=None,
+    unit_suffix="",
+    prefix="line",
+    unidade=None
+):
     work = df.dropna(subset=["valor_num"]).copy()
+    if work.empty:
+        st.info("Sem dados para este gráfico.")
+        return
+
     fig = go.Figure()
 
     if main_series:
@@ -720,18 +701,23 @@ def line_with_optional_meta(df, title, main_series=None, unit_suffix="", prefix=
                     x=main["mes_label"],
                     y=main["valor_num"],
                     mode="lines+markers",
-                    name=main_series
+                    name=main_series.title(),
+                    line=dict(color=APP_COLORS["primary"], width=3),
+                    marker=dict(size=7, color=APP_COLORS["primary"])
                 )
             )
     else:
-        for serie in work["serie"].dropna().unique():
+        series = work["serie"].dropna().unique().tolist()
+        for i, serie in enumerate(series):
             temp = work[work["serie"] == serie]
             fig.add_trace(
                 go.Scatter(
                     x=temp["mes_label"],
                     y=temp["valor_num"],
                     mode="lines+markers",
-                    name=str(serie)
+                    name=str(serie),
+                    line=dict(width=2.5),
+                    marker=dict(size=6)
                 )
             )
 
@@ -743,17 +729,34 @@ def line_with_optional_meta(df, title, main_series=None, unit_suffix="", prefix=
                 y=meta["valor_num"],
                 mode="lines+markers",
                 name="Meta",
-                line=dict(dash="dash")
+                line=dict(color=APP_COLORS["secondary"], width=2, dash="dash"),
+                marker=dict(size=5, color=APP_COLORS["secondary"])
             )
         )
 
-    fig.update_layout(height=320, yaxis_title=unit_suffix)
-    fig = apply_plotly_theme(fig)
+    showlegend, legend_orientation = smart_legend_visibility(work)
+    fig = clean_trace_names(fig)
+    fig = apply_plotly_theme(
+        fig,
+        title=title,
+        subtitle=chart_subtitle(work, unidade),
+        yaxis_title=unit_suffix,
+        height=350,
+        legend=showlegend,
+        legend_orientation=legend_orientation
+    )
     plot(fig, prefix)
 
 
-def grouped_bar(df, title, color_map=None, barmode="group", unit_suffix="", prefix="bar"):
-    st.markdown(f"**{title}**")
+def grouped_bar(
+    df,
+    title,
+    color_map=None,
+    barmode="group",
+    unit_suffix="",
+    prefix="bar",
+    unidade=None
+):
     work = df.dropna(subset=["valor_num"]).copy()
     if work.empty:
         st.info("Sem dados para este gráfico.")
@@ -768,12 +771,33 @@ def grouped_bar(df, title, color_map=None, barmode="group", unit_suffix="", pref
         color_discrete_map=color_map or {}
     )
 
-    fig.update_layout(height=360, legend_title_text="", yaxis_title=unit_suffix)
-    fig = apply_plotly_theme(fig)
+    fig.update_traces(
+        marker_line_width=0,
+        hovertemplate="<b>%{fullData.name}</b><br>Mês: %{x}<br>Valor: %{y:,.0f}<extra></extra>"
+    )
+
+    showlegend, legend_orientation = smart_legend_visibility(work)
+    fig = clean_trace_names(fig)
+    fig = apply_plotly_theme(
+        fig,
+        title=title,
+        subtitle=chart_subtitle(work, unidade),
+        yaxis_title=unit_suffix,
+        height=380,
+        legend=showlegend,
+        legend_orientation=legend_orientation
+    )
     plot(fig, prefix)
 
-def stacked_bar(df, title, color_map=None, as_percent=False, prefix="stack"):
-    st.markdown(f"**{title}**")
+
+def stacked_bar(
+    df,
+    title,
+    color_map=None,
+    as_percent=False,
+    prefix="stack",
+    unidade=None
+):
     work = df.dropna(subset=["valor_num"]).copy()
     if work.empty:
         st.info("Sem dados para este gráfico.")
@@ -795,31 +819,45 @@ def stacked_bar(df, title, color_map=None, as_percent=False, prefix="stack"):
             go.Bar(
                 x=pivot.index,
                 y=pivot[serie],
-                name=serie,
-                marker_color=(color_map or {}).get(serie)
+                name=str(serie),
+                marker_color=(color_map or {}).get(serie),
+                hovertemplate=f"<b>{serie}</b><br>Mês: %{{x}}<br>Valor: %{{y:.1f}}{'%' if as_percent else ''}<extra></extra>"
             )
         )
 
-    fig.update_layout(
-        barmode="stack",
-        height=360,
-        yaxis_title="%" if as_percent else "Quantidade"
+    showlegend, legend_orientation = True, "h"
+    fig = clean_trace_names(fig)
+    fig = apply_plotly_theme(
+        fig,
+        title=title,
+        subtitle=chart_subtitle(work, unidade),
+        yaxis_title="Percentual (%)" if as_percent else "Quantidade",
+        height=390,
+        legend=showlegend,
+        legend_orientation=legend_orientation
     )
-    fig = apply_plotly_theme(fig)
+
+    fig.update_layout(barmode="stack")
+
+    if as_percent:
+        fig.update_yaxes(range=[0, 100])
+
     plot(fig, prefix)
 
-def pie_latest(df, title, color_map=None, prefix="pie"):
-    st.markdown(f"**{title}**")
+
+def pie_latest(df, title, color_map=None, prefix="pie", unidade=None):
     work = df.dropna(subset=["valor_num"]).copy()
     if work.empty:
         st.info("Sem dados para este gráfico.")
         return
 
     latest_mes = work["mes"].dropna().max()
-    latest = work[work["mes"] == latest_mes]
+    latest = work[work["mes"] == latest_mes].copy()
     if latest.empty:
         st.info("Sem dados para este gráfico.")
         return
+
+    latest["serie"] = latest["serie"].astype(str).apply(truncate_series_name)
 
     fig = px.pie(
         latest,
@@ -829,8 +867,22 @@ def pie_latest(df, title, color_map=None, prefix="pie"):
         color_discrete_map=color_map or {}
     )
 
-    fig.update_layout(height=360)
-    fig = apply_plotly_theme(fig)
+    fig.update_traces(
+        textposition="inside",
+        textinfo="percent",
+        hole=0.45,
+        sort=False,
+        hovertemplate="<b>%{label}</b><br>Valor: %{value:,.0f}<br>Participação: %{percent}<extra></extra>"
+    )
+
+    fig = apply_plotly_theme(
+        fig,
+        title=title,
+        subtitle=f"{unidade + ' • ' if unidade else ''}{MESES_LABEL.get(latest_mes, latest_mes)}",
+        height=380,
+        legend=True,
+        legend_orientation="h"
+    )
     plot(fig, prefix)
 def render_upa_page(df, unidade):
     st.subheader(unidade)
@@ -848,10 +900,6 @@ def render_upa_page(df, unidade):
     faixa = filter_panel(df, unidade, "ATENDIMENTOS DIVIDIDOS POR FAIXA ETARIA")
     origem = filter_panel(df, unidade, "ATENDIMENTOS DE  PACIENTES")
     obitos = filter_panel(df, unidade, "ÓBITOS")
-    recep_ctx = build_kpi_context(recep, serie_norm="PACIENTES RECEPCIONADOS")
-    atend_ctx = build_kpi_context(atend_med, serie_norm="ATENDIMENTOS MÉDICOS")
-    obitos_ctx = build_kpi_context(obitos)
-    exames_ctx = build_kpi_context(exames, exclude_series_norm="TOTAL")
 
     section_start("Resumo executivo", "Visão consolidada dos principais indicadores da unidade")
     c1, c2, c3, c4 = st.columns(4)
@@ -859,49 +907,33 @@ def render_upa_page(df, unidade):
     with c1:
         card(
             "Pacientes recepcionados",
-            format_int(recep_ctx["current"]),
+            format_int(recep["valor_num"].sum()),
             icon="👥",
-            subtitle=f"Último mês selecionado • {recep_ctx['latest_month_label']}",
-            delta_pct=recep_ctx["delta_pct"],
-            delta_good_when="up",
-            meta_value=recep_ctx["meta"],
-            footer_text=f"Acumulado no período: {format_int(recep_ctx['total'])}"
+            subtitle="Volume total no período"
         )
 
     with c2:
         card(
             "Atendimentos médicos",
-            format_int(atend_ctx["current"]),
+            format_int(atend_med[atend_med["serie_norm"] == "ATENDIMENTOS MÉDICOS"]["valor_num"].sum()),
             icon="🩺",
-            subtitle=f"Último mês selecionado • {atend_ctx['latest_month_label']}",
-            delta_pct=atend_ctx["delta_pct"],
-            delta_good_when="up",
-            meta_value=atend_ctx["meta"],
-            footer_text=f"Acumulado no período: {format_int(atend_ctx['total'])}"
+            subtitle="Produção médica consolidada"
         )
 
     with c3:
         card(
             "Óbitos",
-            format_int(obitos_ctx["current"]),
+            format_int(obitos["valor_num"].sum()),
             icon="⚠️",
-            subtitle=f"Último mês selecionado • {obitos_ctx['latest_month_label']}",
-            delta_pct=obitos_ctx["delta_pct"],
-            delta_good_when="down",
-            meta_value=None,
-            footer_text=f"Acumulado no período: {format_int(obitos_ctx['total'])}"
+            subtitle="Ocorrências registradas"
         )
 
     with c4:
         card(
             "Exames internos",
-            format_int(exames_ctx["current"]),
+            format_int(exames[~exames["serie_norm"].eq("TOTAL")]["valor_num"].sum()),
             icon="🧪",
-            subtitle=f"Último mês selecionado • {exames_ctx['latest_month_label']}",
-            delta_pct=exames_ctx["delta_pct"],
-            delta_good_when="up",
-            meta_value=None,
-            footer_text=f"Acumulado no período: {format_int(exames_ctx['total'])}"
+            subtitle="Procedimentos realizados"
         )
     section_end()
 
@@ -909,35 +941,56 @@ def render_upa_page(df, unidade):
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("**Pacientes recepcionados por mês + média diária**")
         fig = go.Figure()
+
         main = recep[recep["serie_norm"] == "PACIENTES RECEPCIONADOS"]
         avg = recep[recep["serie_norm"].isin(["MÉDIA DIÁRIA", "MEDIA DIÁRIA", "MEDIA DIARIA"])]
 
         if not main.empty:
-            fig.add_trace(go.Bar(
-                x=main["mes_label"],
-                y=main["valor_num"],
-                name="Pacientes recepcionados"
-            ))
+            fig.add_trace(
+                go.Bar(
+                    x=main["mes_label"],
+                    y=main["valor_num"],
+                    name="Pacientes recepcionados",
+                    marker_color=APP_COLORS["primary_soft"],
+                    hovertemplate="<b>Pacientes recepcionados</b><br>Mês: %{x}<br>Total: %{y:,.0f}<extra></extra>"
+            )
+        )
+
         if not avg.empty:
-            fig.add_trace(go.Scatter(
-                x=avg["mes_label"],
-                y=avg["valor_num"],
-                mode="lines+markers",
-                name="Média diária"
-            ))
+            fig.add_trace(
+                go.Scatter(
+                    x=avg["mes_label"],
+                    y=avg["valor_num"],
+                    mode="lines+markers",
+                    name="Média diária",
+                    line=dict(color=APP_COLORS["primary"], width=3),
+                    marker=dict(color=APP_COLORS["primary"], size=7),
+                    hovertemplate="<b>Média diária</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
+               )
+           )
 
-        fig.update_layout(height=340)
-        fig = apply_plotly_theme(fig)
+        fig = clean_trace_names(fig)
+
+        fig = apply_plotly_theme(
+            fig,
+            title="Pacientes recepcionados por mês",
+            subtitle=chart_subtitle(recep, unidade) + " • total mensal + média diária",
+            yaxis_title="Quantidade",
+            height=380,
+            legend=True,
+            legend_orientation="h"
+        )
+
         plot(fig, f"{unidade}_recep_media")
-
+    
     with col2:
         line_with_optional_meta(
             atend_med,
-            "Atendimentos médicos (comparando com a meta)",
+            "Atendimentos médicos vs meta",
             main_series="ATENDIMENTOS MÉDICOS",
-            prefix=f"{unidade}_atend_med"
+            prefix=f"{unidade}_atend_med",
+            unidade=unidade
         )
     section_end()
 
@@ -946,7 +999,8 @@ def render_upa_page(df, unidade):
         risco[~risco["serie_norm"].eq("TOTAL DE ATENDIMENTOS")],
         "Atendimentos por classificação de risco",
         color_map=RISK_COLORS,
-        prefix=f"{unidade}_risco_qtd"
+        prefix=f"{unidade}_risco_qtd",
+        unidade=unidade
     )
 
     stacked_bar(
@@ -954,15 +1008,17 @@ def render_upa_page(df, unidade):
         "Percentual de atendimentos por classificação de risco",
         color_map=RISK_COLORS,
         as_percent=True,
-        prefix=f"{unidade}_risco_perc"
+        prefix=f"{unidade}_risco_perc",
+        unidade=unidade
     )
 
     line_with_optional_meta(
         espera,
-        "Tempo de espera para classificação de risco (comparando com a meta)",
+        "Tempo de espera para classificação de risco vs meta",
         main_series="MÉDIA GERAL",
         unit_suffix="Minutos",
-        prefix=f"{unidade}_espera_class"
+        prefix=f"{unidade}_espera_class",
+        unidade=unidade
     )
 
     st.markdown("**Tempo médio de espera de atendimento médico por classificação de risco**")
@@ -971,15 +1027,27 @@ def render_upa_page(df, unidade):
 
     for serie in med["serie"].dropna().unique():
         temp = med[med["serie"] == serie]
-        fig.add_trace(go.Scatter(
-            x=temp["mes_label"],
-            y=temp["valor_num"],
-            mode="lines+markers",
-            name=serie
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=temp["mes_label"],
+                y=temp["valor_num"],
+                mode="lines+markers",
+                name=serie,
+                line=dict(width=2.5),
+                marker=dict(size=6)
+            )
+        )  
 
-    fig.update_layout(height=320, yaxis_title="Minutos")
-    fig = apply_plotly_theme(fig)
+    fig = clean_trace_names(fig)
+    fig = apply_plotly_theme(
+        fig,
+        title="Tempo médio de espera de atendimento médico por classificação de risco",
+        subtitle=chart_subtitle(med, unidade),
+        yaxis_title="Minutos",
+        height=360,
+        legend=True,
+        legend_orientation="h"
+    )
     plot(fig, f"{unidade}_tempo_med_risco")
     section_end()
 
@@ -990,47 +1058,63 @@ def render_upa_page(df, unidade):
             intern,
             "Tempo de permanência de pacientes internados",
             unit_suffix="Minutos",
-            prefix=f"{unidade}_intern"
+            prefix=f"{unidade}_intern",
+            unidade=unidade
         )
     with col2:
         grouped_bar(
             semint,
             "Tempo de permanência de pacientes sem internação",
             unit_suffix="Minutos",
-            prefix=f"{unidade}_semintern"
+            prefix=f"{unidade}_semintern",
+            unidade=unidade
         )
 
     col1, col2 = st.columns(2)
     with col1:
-        grouped_bar(transf, "Transferências (remoções)", prefix=f"{unidade}_transf")
+        grouped_bar(
+            transf,
+            "Transferências (remoções)",
+            prefix=f"{unidade}_transf",
+            unidade=unidade
+        )
     with col2:
         grouped_bar(
             exames[~exames["serie_norm"].eq("TOTAL")],
             "Exames internos",
-            prefix=f"{unidade}_exames"
+            prefix=f"{unidade}_exames",
+            unidade=unidade
         )
 
-    grouped_bar(
-        faixa[~faixa["serie_norm"].eq("TOTAL")],
-        "Atendimentos divididos por faixa etária",
-        prefix=f"{unidade}_faixa"
-    )
+        grouped_bar(
+            faixa[~faixa["serie_norm"].eq("TOTAL")],
+            "Atendimentos divididos por faixa etária",
+            prefix=f"{unidade}_faixa",
+            unidade=unidade
+        )
 
     col1, col2 = st.columns(2)
     with col1:
         grouped_bar(
             origem[~origem["serie_norm"].eq("TOTAL")],
             "Atendimentos de pacientes da cidade x outras cidades",
-            prefix=f"{unidade}_origem_bar"
+            prefix=f"{unidade}_origem_bar",
+            unidade=unidade
         )
     with col2:
         pie_latest(
             origem[~origem["serie_norm"].eq("TOTAL")],
             "Distribuição mais recente de pacientes por origem",
-            prefix=f"{unidade}_origem_pie"
+            prefix=f"{unidade}_origem_pie",
+            unidade=unidade
         )
 
-    grouped_bar(obitos, "Óbitos", prefix=f"{unidade}_obitos")
+        grouped_bar(
+            obitos,
+            "Óbitos",
+            prefix=f"{unidade}_obitos",
+            unidade=unidade
+        )
     section_end()
 
 def render_hmji(df):
@@ -1043,46 +1127,31 @@ def render_hmji(df):
     exames = filter_panel(df, unidade, "EXAMES INTERNOS")
     cir = filter_panel(df, unidade, "PROCEDIMENTOS CIRÚRGICOS")
     anes = filter_panel(df, unidade, "ANESTESIAS")
-    clin_ctx = build_kpi_context(clin, serie_norm="PACIENTES CLÍNICOS ATENDIDOS")
-    obitos_ctx = build_kpi_context(obitos)
-    cir_ctx = build_kpi_context(cir)
 
     c1, c2, c3 = st.columns(3)
 
     with c1:
         card(
             "Pacientes clínicos",
-            format_int(clin_ctx["current"]),
+            format_int(clin[clin["serie_norm"] == "PACIENTES CLÍNICOS ATENDIDOS"]["valor_num"].sum()),
             icon="🏥",
-            subtitle=f"Último mês selecionado • {clin_ctx['latest_month_label']}",
-            delta_pct=clin_ctx["delta_pct"],
-            delta_good_when="up",
-            meta_value=clin_ctx["meta"],
-            footer_text=f"Acumulado no período: {format_int(clin_ctx['total'])}"
+            subtitle="Atendimentos no período"
         )
 
     with c2:
         card(
             "Óbitos",
-            format_int(obitos_ctx["current"]),
+            format_int(obitos["valor_num"].sum()),
             icon="⚠️",
-            subtitle=f"Último mês selecionado • {obitos_ctx['latest_month_label']}",
-            delta_pct=obitos_ctx["delta_pct"],
-            delta_good_when="down",
-            meta_value=None,
-            footer_text=f"Acumulado no período: {format_int(obitos_ctx['total'])}"
+            subtitle="Eventos registrados"
         )
 
     with c3:
         card(
             "Procedimentos cirúrgicos",
-            format_int(cir_ctx["current"]),
+            format_int(cir["valor_num"].sum()),
             icon="🩹",
-            subtitle=f"Último mês selecionado • {cir_ctx['latest_month_label']}",
-            delta_pct=cir_ctx["delta_pct"],
-            delta_good_when="up",
-            meta_value=cir_ctx["meta"],
-            footer_text=f"Acumulado no período: {format_int(cir_ctx['total'])}"
+            subtitle="Produção cirúrgica"
         )
 
     col1, col2 = st.columns(2)
