@@ -191,6 +191,12 @@ def plot(fig, prefix="grafico"):
     _plot_counter += 1
     st.plotly_chart(fig, use_container_width=True, key=f"{prefix}_{_plot_counter}")
 
+BASE_DIR = Path(__file__).resolve().parent
+ASSETS_DIR = BASE_DIR / "assets"
+
+LOGO_PATRIS = ASSETS_DIR / "patris.png"
+LOGO_PREFEITURA = ASSETS_DIR / "prefeitura.png"
+
 def local_excel_path():
     base = Path(__file__).parent
     names = [
@@ -631,7 +637,7 @@ def hero_header(page_title, source_name, meses_selecionados):
     with col1:
         st.markdown('<div class="logo-left">', unsafe_allow_html=True)
         try:
-            st.image("assets/patris.png", width=315)
+            st.image(str(LOGO_PATRIS), width=315)
         except Exception:
             st.empty()
         st.markdown("</div>", unsafe_allow_html=True)
@@ -658,7 +664,7 @@ def hero_header(page_title, source_name, meses_selecionados):
     with col3:
         st.markdown('<div class="logo-slot">', unsafe_allow_html=True)
         try:
-            st.image("assets/prefeitura.png", width=315)
+            st.image(str(LOGO_PREFEITURA), width=315)
         except Exception:
             st.empty()
         st.markdown("</div>", unsafe_allow_html=True)
