@@ -74,7 +74,7 @@ div[data-testid="stMetric"] {
 
 /* ===== EXPANDER ===== */
 details {
-    background: #FFFFFF;
+    background: #0B1220;
     border: 1px solid #E2E8F0;
     border-radius: 16px;
     padding: 0.35rem 0.8rem;
@@ -90,7 +90,7 @@ div[data-baseweb="input"] > div {
 
 /* ===== PLOTLY CONTAINER ===== */
 div[data-testid="stPlotlyChart"] {
-    background: #FFFFFF;
+    background: #0B1220;
     border: 1px solid #E2E8F0;
     border-radius: 20px;
     padding: 0.35rem 0.35rem 0.15rem 0.35rem;
@@ -124,7 +124,7 @@ div[data-testid="stPlotlyChart"] {
 /* ===== HERO / TOPO ===== */
 .hero-wrap {
     background: linear-gradient(135deg, #0F172A 0%, #12324A 50%, #0F6CBD 100%);
-    border: 1px solid rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.05);
     border-radius: 24px;
     padding: 1.2rem 1.25rem;
     margin-bottom: 1.1rem;
@@ -154,7 +154,7 @@ div[data-testid="stPlotlyChart"] {
 .hero-chip {
     background: rgba(255,255,255,0.12);
     color: #FFFFFF;
-    border: 1px solid rgba(255,255,255,0.16);
+    border: 1px solid rgba(255,255,255,0.05);
     border-radius: 999px;
     padding: 0.42rem 0.78rem;
     font-size: 0.82rem;
@@ -541,14 +541,44 @@ APP_COLORS = {
     "neutral": "#64748B",
     "grid": "rgba(148,163,184,0.16)",
     "axis": "#94A3B8",
-    "text": "#334155",
-    "title": "#0F172A",
-    "plot_bg": "#FFFFFF",
+    "text": "#CAD2DD",
+    "title": "#F6FBFA",
+    "plot_bg": "#0F172A",
 }
 
 DEFAULT_CHART_COLORS = [
-    "#0F6CBD", "#16A34A", "#F59E0B", "#7C3AED", "#EF4444",
-    "#14B8A6", "#F97316", "#1D4ED8", "#E11D48", "#6B7280"
+    "#0F6CBD",  # azul principal
+    "#16A34A",  # verde
+    "#F59E0B",  # amarelo
+    "#DC2626",  # vermelho
+    "#7C3AED",  # roxo
+    "#0891B2",  # azul secundário
+    "#64748B"   # neutro
+]
+
+APP_COLORS = {
+    "primary": "#0F6CBD",
+    "primary_soft": "#93C5FD",
+    "secondary": "#0F172A",
+    "success": "#16A34A",
+    "warning": "#F59E0B",
+    "danger": "#DC2626",
+    "neutral": "#64748B",
+    "grid": "rgba(148,163,184,0.14)",
+    "axis": "#94A3B8",
+    "text": "#CFD7E2",
+    "title": "#F6F7FB",
+    "plot_bg": "#0F172A",
+}
+
+DEFAULT_CHART_COLORS = [
+    "#0F6CBD",
+    "#16A34A",
+    "#F59E0B",
+    "#DC2626",
+    "#7C3AED",
+    "#0891B2",
+    "#64748B"
 ]
 
 def apply_plotly_theme(
@@ -588,15 +618,24 @@ def apply_plotly_theme(
         ),
         colorway=DEFAULT_CHART_COLORS,
         height=height,
-        margin=dict(l=28, r=18, t=78, b=42),
+        margin=dict(l=30, r=18, t=78, b=44),
         hoverlabel=dict(
             bgcolor="#FFFFFF",
             bordercolor="#CBD5E1",
             font=dict(color="#0F172A", size=12)
         ),
-        bargap=0.28,
+        bargap=0.30,
         bargroupgap=0.10
     )
+
+    first_x_len = 0
+    try:
+        if fig.data and hasattr(fig.data[0], "x") and fig.data[0].x is not None:
+            first_x_len = len(fig.data[0].x)
+    except Exception:
+        first_x_len = 0
+
+    auto_tick_angle = 0 if first_x_len <= 6 else -30
 
     fig.update_xaxes(
         title_text="",
@@ -604,7 +643,7 @@ def apply_plotly_theme(
         showline=False,
         zeroline=False,
         tickfont=dict(color="#64748B", size=11),
-        tickangle=tick_angle,
+        tickangle=auto_tick_angle if tick_angle == 0 else tick_angle,
         automargin=True
     )
 
@@ -658,20 +697,6 @@ def truncate_series_name(name, max_len=28):
 
 
 def clean_trace_names(fig):
-    for trace in fig.data:
-        current_name = getattr(trace, "name", None)
-
-        if current_name is None:
-            trace.name = ""
-            continue
-
-        name_str = str(current_name).strip()
-
-        if name_str.lower() == "undefined":
-            trace.name = ""
-        else:
-            trace.name = truncate_series_name(name_str)
-
     return fig
 
 
@@ -702,13 +727,14 @@ def line_with_optional_meta(
                     y=main["valor_num"],
                     mode="lines+markers",
                     name=main_series.title(),
-                    line=dict(color=APP_COLORS["primary"], width=3),
-                    marker=dict(size=7, color=APP_COLORS["primary"])
+                    line=dict(color=APP_COLORS["primary"], width=3.5),
+                    marker=dict(size=7, color=APP_COLORS["primary"]),
+                    hovertemplate="<b>%{fullData.name}</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
                 )
             )
     else:
         series = work["serie"].dropna().unique().tolist()
-        for i, serie in enumerate(series):
+        for serie in series:
             temp = work[work["serie"] == serie]
             fig.add_trace(
                 go.Scatter(
@@ -716,8 +742,10 @@ def line_with_optional_meta(
                     y=temp["valor_num"],
                     mode="lines+markers",
                     name=str(serie),
-                    line=dict(width=2.5),
-                    marker=dict(size=6)
+                    line=dict(width=2),
+                    marker=dict(size=5),
+                    opacity=0.65,
+                    hovertemplate="<b>%{fullData.name}</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
                 )
             )
 
@@ -729,22 +757,22 @@ def line_with_optional_meta(
                 y=meta["valor_num"],
                 mode="lines+markers",
                 name="Meta",
-                line=dict(color=APP_COLORS["secondary"], width=2, dash="dash"),
-                marker=dict(size=5, color=APP_COLORS["secondary"])
+                line=dict(color=APP_COLORS["neutral"], width=2, dash="dash"),
+                marker=dict(size=5, color=APP_COLORS["neutral"]),
+                hovertemplate="<b>Meta</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
             )
         )
 
-    showlegend, legend_orientation = smart_legend_visibility(work)
-    fig = clean_trace_names(fig)
     fig = apply_plotly_theme(
         fig,
         title=title,
         subtitle=chart_subtitle(work, unidade),
         yaxis_title=unit_suffix,
         height=350,
-        legend=showlegend,
-        legend_orientation=legend_orientation
+        legend=True,
+        legend_orientation="h"
     )
+
     plot(fig, prefix)
 
 
@@ -776,17 +804,16 @@ def grouped_bar(
         hovertemplate="<b>%{fullData.name}</b><br>Mês: %{x}<br>Valor: %{y:,.0f}<extra></extra>"
     )
 
-    showlegend, legend_orientation = smart_legend_visibility(work)
-    fig = clean_trace_names(fig)
     fig = apply_plotly_theme(
         fig,
         title=title,
         subtitle=chart_subtitle(work, unidade),
         yaxis_title=unit_suffix,
         height=380,
-        legend=showlegend,
-        legend_orientation=legend_orientation
+        legend=True,
+        legend_orientation="h"
     )
+
     plot(fig, prefix)
 
 
@@ -825,16 +852,14 @@ def stacked_bar(
             )
         )
 
-    showlegend, legend_orientation = True, "h"
-    fig = clean_trace_names(fig)
     fig = apply_plotly_theme(
         fig,
         title=title,
         subtitle=chart_subtitle(work, unidade),
         yaxis_title="Percentual (%)" if as_percent else "Quantidade",
         height=390,
-        legend=showlegend,
-        legend_orientation=legend_orientation
+        legend=True,
+        legend_orientation="h"
     )
 
     fig.update_layout(barmode="stack")
@@ -856,8 +881,6 @@ def pie_latest(df, title, color_map=None, prefix="pie", unidade=None):
     if latest.empty:
         st.info("Sem dados para este gráfico.")
         return
-
-    latest["serie"] = latest["serie"].astype(str).apply(truncate_series_name)
 
     fig = px.pie(
         latest,
@@ -883,6 +906,7 @@ def pie_latest(df, title, color_map=None, prefix="pie", unidade=None):
         legend=True,
         legend_orientation="h"
     )
+
     plot(fig, prefix)
 def render_upa_page(df, unidade):
     st.subheader(unidade)
