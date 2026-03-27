@@ -1,4 +1,3 @@
-
 import datetime as dt
 from io import BytesIO
 from pathlib import Path
@@ -325,6 +324,59 @@ def load_workbook_data(file_bytes=None):
     data = pd.concat(frames, ignore_index=True)
     return data, source_name
 
+
+@st.cache_data(show_spinner=False)
+def load_metas_data(file_bytes=None):
+    if file_bytes is None:
+        path = local_excel_path()
+        if not path:
+            return pd.DataFrame()
+        wb = openpyxl.load_workbook(path, data_only=True)
+    else:
+        wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True)
+
+    sheet_name = "METAS DO PLANO DE TRABALHO"
+    if sheet_name not in wb.sheetnames:
+        return pd.DataFrame()
+
+    ws = wb[sheet_name]
+    meses = []
+    for c in range(3, 15):
+        valor = ws.cell(3, c).value
+        meses.append(str(valor).strip().upper() if valor else None)
+
+    rows = []
+    for r in range(4, ws.max_row + 1, 2):
+        categoria = ws.cell(r, 2).value
+        if categoria is None:
+            continue
+
+        categoria = str(categoria).strip()
+        if categoria.upper().startswith("TOTAL GERAL"):
+            continue
+
+        meta_row = r + 1 if r + 1 <= ws.max_row else None
+        total_meta = normalize_value(ws.cell(meta_row, 15).value) if meta_row else None
+
+        for idx, c in enumerate(range(3, 15)):
+            mes = meses[idx] if idx < len(meses) else None
+            rows.append({
+                "categoria": categoria,
+                "categoria_norm": categoria.upper(),
+                "mes": mes,
+                "mes_label": MESES_LABEL.get(mes, mes),
+                "meta": normalize_value(ws.cell(meta_row, c).value) if meta_row else None,
+                "meta_total": total_meta,
+            })
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["meta"] = pd.to_numeric(df["meta"], errors="coerce")
+        df["meta_total"] = pd.to_numeric(df["meta_total"], errors="coerce")
+        df["mes"] = pd.Categorical(df["mes"], categories=MESES, ordered=True)
+        df = df.sort_values(["categoria", "mes"])
+    return df
+
 def filter_panel(df, unidade, painel):
     return df[(df["unidade"] == unidade) & (df["painel"] == painel)].copy()
 
@@ -519,6 +571,310 @@ def format_meta_line(current=None, meta=None):
         f" • {status} em {clean_card_value(abs(diff)) if diff != 0 else '0'}"
     )
 
+
+
+def format_pct_br(x):
+    if x is None or pd.isna(x):
+        return "-"
+    return f"{x:,.1f}%".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def format_compact_number(x):
+    if x is None or pd.isna(x):
+        return "-"
+    x = float(x)
+    if abs(x) >= 1000000:
+        return f"{x / 1000000:,.1f} mi".replace(",", "X").replace(".", ",").replace("X", ".")
+    if abs(x) >= 1000:
+        return f"{x:,.0f}".replace(",", ".")
+    if x.is_integer():
+        return str(int(x))
+    return f"{x:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def percent_atingido(executado, meta):
+    if executado is None or meta is None or pd.isna(executado) or pd.isna(meta) or meta == 0:
+        return None
+    return (executado / meta) * 100
+
+
+def status_meta(executado, meta):
+    pct = percent_atingido(executado, meta)
+    if pct is None:
+        return "Sem base", SEMANTIC_COLORS["neutral"], None
+    if executado > meta:
+        return "Acima da meta", SEMANTIC_COLORS["success"], ((executado - meta) / meta) * 100
+    if executado < meta:
+        return "Abaixo da meta", SEMANTIC_COLORS["warning"], ((meta - executado) / meta) * 100
+    return "Meta atingida", SEMANTIC_COLORS["info"], 0.0
+
+
+def compute_executado_for_categoria(data, categoria, mes=None):
+    work = data.copy()
+
+    if mes is not None:
+        work = work[work["mes"] == mes]
+
+    work = work.dropna(subset=["valor_num"])
+    if work.empty:
+        return 0.0
+
+    categoria_norm = str(categoria).strip().upper()
+
+    def sum_mask(mask):
+        subset = work[mask & work["valor_num"].notna()].copy()
+        if subset.empty:
+            return 0.0
+
+        subset = subset[
+            ~subset["serie_norm"].isin(
+                ["META", "MÉDIA DIÁRIA", "MEDIA DIÁRIA", "MEDIA DIARIA", "TOTAL"]
+            )
+        ]
+        return float(subset["valor_num"].sum()) if not subset.empty else 0.0
+
+    painel_upper = work["painel"].astype(str).str.upper()
+    serie_upper = work["serie_norm"].astype(str).str.upper()
+    unidade_upper = work["unidade"].astype(str).str.upper()
+
+    # ===== AJUSTE PEDIDO =====
+    # Estes dois cards individuais devem ficar sem executado,
+    # pois na sua regra atual isso não consta como executado válido na planilha.
+    if categoria_norm in ["MÉDICOS", "ATENÇÃO ESPECIALIZADA", "ATENCAO ESPECIALIZADA"]:
+        return 0.0
+
+    if categoria_norm == "AÇÕES COLETIVA":
+        return sum_mask(
+            painel_upper.str.contains("AÇÃO COLET", na=False) |
+            painel_upper.str.contains("ACAO COLET", na=False) |
+            serie_upper.str.contains("AÇÃO COLET", na=False) |
+            serie_upper.str.contains("ACAO COLET", na=False)
+        )
+
+    if categoria_norm == "ATENÇÃO PRIMÁRIA" or categoria_norm == "ATENCAO PRIMARIA":
+        return sum_mask(unidade_upper.eq("ATENÇÃO PRIMÁRIA") | unidade_upper.eq("ATENCAO PRIMARIA"))
+
+    if categoria_norm == "ODONTOLOGIA":
+        return sum_mask(
+            painel_upper.str.contains("ODONTO", na=False) |
+            serie_upper.str.contains("ODONTO", na=False)
+        )
+
+    if categoria_norm == "ENFERMAGEM":
+        return sum_mask(
+            painel_upper.str.contains("ENFERM", na=False) |
+            serie_upper.str.contains("ENFERM", na=False)
+        )
+
+    if categoria_norm == "EQUIPE MULTIDISCIPLINAR (EXCETO MÉDICOS)":
+        return sum_mask(
+            painel_upper.eq("NÍVEL SUPERIOR (EXCETO MÉDICO)") |
+            painel_upper.eq("NIVEL SUPERIOR (EXCETO MEDICO)") |
+            serie_upper.str.contains("NUTRI", na=False) |
+            serie_upper.str.contains("PSICOLOG", na=False) |
+            serie_upper.str.contains("ASSISTENTE SOCIAL", na=False) |
+            serie_upper.str.contains("FISIOTERAP", na=False)
+        )
+
+    return 0.0
+
+
+def build_metas_panel(data, metas_df):
+    if metas_df is None or metas_df.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for item in metas_df.itertuples(index=False):
+        executado = compute_executado_for_categoria(data, item.categoria, item.mes)
+        atingido = percent_atingido(executado, item.meta)
+        saldo = None
+        saldo_pct = None
+        if item.meta is not None and not pd.isna(item.meta):
+            saldo = executado - item.meta
+            if item.meta != 0:
+                saldo_pct = (saldo / item.meta) * 100
+
+        rows.append({
+            "categoria": item.categoria,
+            "mes": item.mes,
+            "mes_label": item.mes_label,
+            "meta": item.meta,
+            "executado": executado,
+            "atingido_pct": atingido,
+            "saldo": saldo,
+            "saldo_pct": saldo_pct,
+            "meta_total": item.meta_total,
+        })
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["mes"] = pd.Categorical(df["mes"], categories=MESES, ordered=True)
+        df = df.sort_values(["categoria", "mes"])
+    return df
+
+
+def meta_status_badge(executado, meta):
+    label, color, variacao_pct = status_meta(executado, meta)
+    if variacao_pct is None:
+        detalhe = "Sem comparativo"
+    elif executado > meta:
+        detalhe = f"+{format_pct_br(abs(variacao_pct))}"
+    elif executado < meta:
+        detalhe = f"Falta {format_pct_br(abs(variacao_pct))}"
+    else:
+        detalhe = "100,0%"
+
+    return label, color, detalhe
+
+
+def render_meta_card(categoria, executado, meta, atingido_pct, saldo_pct):
+    status_label, status_color, detalhe = meta_status_badge(executado, meta)
+
+    if saldo_pct is None:
+        saldo_texto = "Sem cálculo"
+    elif saldo_pct > 0:
+        saldo_texto = f"Excedeu {format_pct_br(abs(saldo_pct))}"
+    elif saldo_pct < 0:
+        saldo_texto = f"Falta {format_pct_br(abs(saldo_pct))}"
+    else:
+        saldo_texto = "Meta exata"
+
+    st.markdown(
+        f"""
+        <div style="
+            background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
+            border: 1px solid #E2E8F0;
+            border-radius: 22px;
+            padding: 18px 18px 16px 18px;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+            min-height: 210px;
+            margin-bottom: 14px;
+        ">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:12px;">
+                <div style="font-size:14px; font-weight:800; color:#0F172A; line-height:1.3;">{categoria}</div>
+                <div style="background:{status_color}; color:#FFFFFF; font-size:11px; font-weight:700; padding:6px 10px; border-radius:999px; white-space:nowrap;">{status_label}</div>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px;">
+                <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:16px; padding:10px;">
+                    <div style="font-size:11px; color:#64748B; text-transform:uppercase; font-weight:700;">Executado</div>
+                    <div style="font-size:26px; font-weight:800; color:#0F172A; margin-top:4px;">{format_compact_number(executado)}</div>
+                </div>
+                <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:16px; padding:10px;">
+                    <div style="font-size:11px; color:#64748B; text-transform:uppercase; font-weight:700;">Meta</div>
+                    <div style="font-size:26px; font-weight:800; color:#0F172A; margin-top:4px;">{format_compact_number(meta)}</div>
+                </div>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <div style="font-size:13px; color:#64748B; font-weight:700;">% atingido</div>
+                <div style="font-size:20px; font-weight:800; color:#0F6CBD;">{format_pct_br(atingido_pct)}</div>
+            </div>
+            <div style="height:8px; background:#E2E8F0; border-radius:999px; overflow:hidden; margin-bottom:10px;">
+                <div style="width:{0 if atingido_pct is None else min(max(atingido_pct,0),100)}%; height:100%; background:{status_color};"></div>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+                <div style="font-size:12px; color:#64748B;">{saldo_texto}</div>
+                <div style="font-size:12px; color:{status_color}; font-weight:700;">{detalhe}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+def render_metas_page(data, metas_df):
+    st.subheader("Metas do Plano")
+
+    if metas_df is None or metas_df.empty:
+        st.warning("A aba 'METAS DO PLANO DE TRABALHO' não foi encontrada ou está vazia.")
+        return
+
+    painel_metas = build_metas_panel(data, metas_df)
+    if painel_metas.empty:
+        st.warning("Não foi possível montar o painel de metas com a base atual.")
+        return
+
+    resumo = (
+        painel_metas.groupby("categoria", as_index=False)
+        .agg({
+            "executado": "sum",
+            "meta": "sum",
+        })
+    )
+    resumo["atingido_pct"] = resumo.apply(lambda x: percent_atingido(x["executado"], x["meta"]), axis=1)
+    resumo["saldo"] = resumo["executado"] - resumo["meta"]
+    resumo["saldo_pct"] = resumo.apply(
+        lambda x: ((x["saldo"] / x["meta"]) * 100) if pd.notna(x["meta"]) and x["meta"] not in [0, None] else None,
+        axis=1
+    )
+
+    total_meta = resumo["meta"].sum()
+    total_executado = resumo["executado"].sum()
+    total_pct = percent_atingido(total_executado, total_meta)
+    total_saldo_pct = ((total_executado - total_meta) / total_meta) * 100 if total_meta else None
+
+    section_start("Resumo geral das metas", "Comparativo consolidado entre executado e meta da aba Metas do Plano")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        card("Executado total", format_compact_number(total_executado), icon="📌", subtitle="Base disponível no período filtrado")
+    with c2:
+        card("Meta total", format_compact_number(total_meta), icon="🎯", subtitle="Somatório das metas filtradas")
+    with c3:
+        card("% atingido", format_pct_br(total_pct), icon="📈", subtitle="Executado em relação à meta")
+    with c4:
+        card("Saldo percentual", format_pct_br(total_saldo_pct), icon="⚖️", subtitle="Acima ou abaixo da meta")
+    section_end()
+
+    section_start("Painel por meta", "Cards executivos com executado, meta, percentual atingido e saldo")
+    cols = st.columns(2)
+    for idx, row in enumerate(resumo.itertuples(index=False)):
+        with cols[idx % 2]:
+            render_meta_card(row.categoria, row.executado, row.meta, row.atingido_pct, row.saldo_pct)
+    section_end()
+
+    serie_grafico = resumo.sort_values("atingido_pct", ascending=False).copy()
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=serie_grafico["categoria"],
+            y=serie_grafico["executado"],
+            name="Executado",
+            marker_color=SEMANTIC_COLORS["realizado"],
+            hovertemplate="<b>Executado</b><br>%{x}<br>%{y:,.0f}<extra></extra>"
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=serie_grafico["categoria"],
+            y=serie_grafico["meta"],
+            name="Meta",
+            marker_color=SEMANTIC_COLORS["meta"],
+            hovertemplate="<b>Meta</b><br>%{x}<br>%{y:,.0f}<extra></extra>"
+        )
+    )
+    fig = apply_plotly_theme(
+        fig,
+        title="Executado x Meta por categoria",
+        subtitle="Comparativo consolidado conforme a base carregada",
+        yaxis_title="Quantidade",
+        height=430,
+        legend=True,
+        legend_orientation="h",
+        tick_angle=-25
+    )
+    fig.update_layout(barmode="group")
+    plot(fig, "metas_comparativo")
+
+    tabela = resumo.copy()
+    tabela["Executado"] = tabela["executado"].apply(format_compact_number)
+    tabela["Meta"] = tabela["meta"].apply(format_compact_number)
+    tabela["% Atingido"] = tabela["atingido_pct"].apply(format_pct_br)
+    tabela["Saldo %"] = tabela["saldo_pct"].apply(format_pct_br)
+    tabela = tabela[["categoria", "Executado", "Meta", "% Atingido", "Saldo %"]]
+    tabela.columns = ["Meta do plano", "Executado", "Meta", "% atingido", "Saldo %"]
+
+    with st.expander("Detalhamento das metas"):
+        st.dataframe(tabela, use_container_width=True, hide_index=True)
+        st.caption("Observação: o executado é calculado com base nos dados disponíveis na planilha carregada. Categorias sem produção correspondente na base atual permanecem zeradas.")
 def card(title, value, icon="📊", subtitle="Indicador consolidado"):
     value = clean_card_value(value)
 
@@ -1499,7 +1855,9 @@ st.markdown("""
 </p>
 """, unsafe_allow_html=True)
 uploaded = st.sidebar.file_uploader("Planilha base (.xlsx)", type=["xlsx"])
-data, source_name = load_workbook_data(uploaded.getvalue()) if uploaded else load_workbook_data(None)
+file_bytes = uploaded.getvalue() if uploaded else None
+data, source_name = load_workbook_data(file_bytes) if uploaded else load_workbook_data(None)
+metas_data = load_metas_data(file_bytes) if uploaded else load_metas_data(None)
 
 if data.empty:
     base = Path(__file__).parent
@@ -1515,7 +1873,7 @@ st.sidebar.success(f"Fonte: {source_name}")
 st.sidebar.markdown("## Navegação")
 pagina = st.sidebar.radio(
     "Selecione a página",
-    ["UPA Luziânia", "UPA Jardim Ingá", "HMJI", "Atenção Secundária", "Saúde Mental", "Atenção Primária"]
+    ["UPA Luziânia", "UPA Jardim Ingá", "HMJI", "Atenção Secundária", "Saúde Mental", "Atenção Primária", "Metas do Plano"]
 )
 
 st.sidebar.markdown("## Filtros")
@@ -1524,8 +1882,13 @@ meses_selecionados = st.sidebar.multiselect(
     [MESES_LABEL[m] for m in MESES],
     default=[MESES_LABEL[m] for m in MESES]
 )
+
 if meses_selecionados:
     data = data[data["mes_label"].isin(meses_selecionados)].copy()
+    metas_data = metas_data[metas_data["mes_label"].isin(meses_selecionados)].copy()
+else:
+    metas_data = metas_data.copy()
+
 hero_header(pagina, source_name, meses_selecionados)
 
 if pagina == "UPA Luziânia":
@@ -1546,11 +1909,13 @@ elif pagina == "Saúde Mental":
         "CONSULTAS ESPECIALIZADAS (CAPS AD III)",
         "CONSULTAS ESPECIALIZADAS (CLÍNICA PSICOLOGIA)",
     ])
-else:
+elif pagina == "Atenção Primária":
     render_generic(data, "ATENÇÃO PRIMÁRIA", [
         "CONSULTAS MÉDICAS",
         "NÍVEL SUPERIOR (EXCETO MÉDICO)",
     ])
+else:
+    render_metas_page(data, metas_data)
 
 with st.expander("Base transformada"):
     st.dataframe(data, use_container_width=True, hide_index=True)
