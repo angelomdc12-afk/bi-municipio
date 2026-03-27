@@ -8,7 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-st.set_page_config(page_title="BI Município", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Painel de Gestão Patris", page_icon="📊", layout="wide")
 
 st.markdown("""
 <style>
@@ -1002,14 +1002,13 @@ def hero_header(page_title, source_name, meses_selecionados):
         st.markdown(
             f"""
             <div class="hero-wrap">
-                <div class="hero-title">BI Município</div>
-                <div class="hero-subtitle">
-                    Painel executivo de indicadores assistenciais
+                <div class="hero-title" style="width: 100%; text-align: center;">Painel de Gestão Patris</div>
+                <div class="hero-subtitle" style="width: 100%; text-align: center;">
+                   Gestão estratégica da produção assistencial e desempenho operacional
                 </div>
-                <div class="hero-chip-row">
+                <div class="hero-chip-row" style="justify-content: center; display: flex;">
                     <div class="hero-chip">Página: {page_title}</div>
                     <div class="hero-chip">Período: {periodo}</div>
-                    <div class="hero-chip">Fonte: {source_name}</div>
                     <div class="hero-chip">Atualizado em: {data_ref}</div>
                 </div>
             </div>
@@ -1788,12 +1787,91 @@ def render_hmji(df):
     unidade = "HMJI"
     st.subheader(unidade)
 
+    unit_df = df[df["unidade"] == unidade].copy()
     clin = filter_panel(df, unidade, "PACIENTES CLÍNICOS ATENDIDOS")
-    obitos = filter_panel(df, unidade, "ÓBITOS")
-    esp = filter_panel(df, unidade, "CONSULTAS ESPECIALIZADAS")
-    exames = filter_panel(df, unidade, "EXAMES INTERNOS")
-    cir = filter_panel(df, unidade, "PROCEDIMENTOS CIRÚRGICOS")
-    anes = filter_panel(df, unidade, "ANESTESIAS")
+
+    meses_base = [m for m in unit_df["mes"].dropna().tolist() if pd.notna(m)]
+    meses_base = list(dict.fromkeys(meses_base))
+
+    if not meses_base:
+        meses_base = [m for m in df["mes"].dropna().tolist() if pd.notna(m)]
+        meses_base = list(dict.fromkeys(meses_base))
+
+    def hmji_block(series_map, include_total=True):
+        work = unit_df.copy()
+        if work.empty:
+            return pd.DataFrame()
+
+        serie_upper = work["serie"].astype(str).str.strip().str.upper()
+
+        aliases = {}
+        for label, alias_list in series_map.items():
+            aliases[label] = [str(x).strip().upper() for x in alias_list]
+
+        selected_aliases = [item for values in aliases.values() for item in values]
+        matched = work[serie_upper.isin(selected_aliases)].copy()
+
+        if not matched.empty:
+            matched["serie_canonica"] = matched["serie"].astype(str).str.strip().str.upper()
+            for canonical, alias_list in aliases.items():
+                matched.loc[
+                    matched["serie_canonica"].isin(alias_list),
+                    "serie_canonica"
+                ] = canonical
+        else:
+            matched["serie_canonica"] = pd.Series(dtype=str)
+
+        if "TOTAL" in aliases:
+            if include_total:
+                matched_total = matched[matched["serie_canonica"] == "TOTAL"].copy()
+            else:
+                matched_total = pd.DataFrame(columns=matched.columns)
+            matched = matched[matched["serie_canonica"] != "TOTAL"].copy()
+            if include_total and not matched_total.empty:
+                matched = pd.concat([matched, matched_total], ignore_index=True)
+
+        if meses_base:
+            grid = pd.MultiIndex.from_product(
+                [meses_base, list(series_map.keys())],
+                names=["mes", "serie_canonica"]
+            ).to_frame(index=False)
+            grid["mes_label"] = grid["mes"].map(MESES_LABEL)
+            base = matched.groupby(["mes", "mes_label", "serie_canonica"], as_index=False)["valor_num"].sum()
+            merged = grid.merge(base, on=["mes", "mes_label", "serie_canonica"], how="left")
+        else:
+            merged = matched.groupby(["mes", "mes_label", "serie_canonica"], as_index=False)["valor_num"].sum()
+
+        merged["valor_num"] = merged["valor_num"].fillna(0.0)
+        merged["unidade"] = unidade
+        merged["serie"] = merged["serie_canonica"]
+        merged["serie_norm"] = merged["serie_canonica"]
+        return merged.sort_values(["mes", "serie"])
+
+    obitos = hmji_block({"TOTAL": ["TOTAL"]}, include_total=True)
+    esp = hmji_block({
+        "CIRURGIA GERAL": ["CIRURGIA GERAL"],
+        "UROLOGIA": ["UROLOGIA"],
+        "GINECOLOGIA": ["GINECOLOGIA"],
+    }, include_total=False)
+    exames = hmji_block({
+        "RAIO-X": ["RAIO-X"],
+        "MAMOGRAFIAS": ["MAMOGRAFIAS"],
+        "ULTRASOM": ["ULTRASOM"],
+        "ELETROCARDIOGRAMA": ["ELETROCARDIOGRAMA"],
+        "TOTAL": ["TOTAL"],
+    }, include_total=True)
+    cir = hmji_block({
+        "CIRURGIAS GRANDES": ["CIRURGIAS GRANDES"],
+        "BIÓPSIAS": ["BIÓPSIAS"],
+        "VASECTOMIAS": ["VASECTOMIAS"],
+        "PEQUENAS CIRURGIAS": ["PEQUENAS CIRURGIAS"],
+    }, include_total=False)
+    anes = hmji_block({
+        "RAQUIANESTESIA": ["RAQUIANESTESIA"],
+        "ANESTESIA GERAL": ["ANESTESIA GERAL"],
+        "BLOQUEIO": ["BLOQUEIO", "BLOQUEIO "],
+        "ANESTESIA LOCAL": ["ANESTESIA LOCAL"],
+    }, include_total=False)
 
     c1, c2, c3 = st.columns(3)
 
@@ -1810,7 +1888,7 @@ def render_hmji(df):
             "Óbitos",
             format_int(obitos["valor_num"].sum()),
             icon="⚠️",
-            subtitle="Eventos registrados"
+            subtitle="Apenas o total de óbitos"
         )
 
     with c3:
@@ -1818,7 +1896,7 @@ def render_hmji(df):
             "Procedimentos cirúrgicos",
             format_int(cir["valor_num"].sum()),
             icon="🩹",
-            subtitle="Produção cirúrgica"
+            subtitle="CIRURGIAS GRANDES, BIÓPSIAS, VASECTOMIAS e PEQUENAS CIRURGIAS"
         )
 
     col1, col2 = st.columns(2)
@@ -1828,21 +1906,46 @@ def render_hmji(df):
         main = clin[clin["serie_norm"] == "PACIENTES CLÍNICOS ATENDIDOS"]
         avg = clin[clin["serie_norm"].isin(["MÉDIA DIÁRIA", "MEDIA DIÁRIA", "MEDIA DIARIA"])]
         if not main.empty:
-            fig.add_trace(go.Bar(x=main["mes_label"], y=main["valor_num"], name="Pacientes clínicos"))
+            fig.add_trace(
+                go.Bar(
+                    x=main["mes_label"],
+                    y=main["valor_num"],
+                    name="Pacientes clínicos",
+                    marker_color=SEMANTIC_COLORS["realizado_soft"],
+                    hovertemplate="<b>Pacientes clínicos</b><br>Mês: %{x}<br>Total: %{y:,.0f}<extra></extra>"
+                )
+            )
         if not avg.empty:
-            fig.add_trace(go.Scatter(x=avg["mes_label"], y=avg["valor_num"], mode="lines+markers", name="Média diária"))
-        fig.update_layout(height=320)
-        fig = apply_plotly_theme(fig)
+            fig.add_trace(
+                go.Scatter(
+                    x=avg["mes_label"],
+                    y=avg["valor_num"],
+                    mode="lines+markers",
+                    name="Média diária",
+                    line=dict(color=SEMANTIC_COLORS["realizado"], width=3),
+                    marker=dict(color=SEMANTIC_COLORS["realizado"], size=7),
+                    hovertemplate="<b>Média diária</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
+                )
+            )
+        fig = apply_plotly_theme(
+            fig,
+            title="Pacientes clínicos atendidos / média diária",
+            subtitle=chart_subtitle(clin, unidade),
+            yaxis_title="Quantidade",
+            height=360,
+            legend=True,
+            legend_orientation="h"
+        )
         fig = apply_month_axis_order(fig, clin)
         plot(fig, f"{unidade}_pacientes")
 
     with col2:
-        grouped_bar(obitos, "Óbitos", prefix=f"{unidade}_obitos")
+        grouped_bar(obitos, "Óbitos", prefix=f"{unidade}_obitos", unidade=unidade)
 
-    grouped_bar(esp, "Consultas especializadas", prefix=f"{unidade}_esp")
-    grouped_bar(exames[~exames["serie_norm"].eq("TOTAL")], "Exames internos", prefix=f"{unidade}_exames")
-    grouped_bar(cir, "Procedimentos cirúrgicos", prefix=f"{unidade}_cir")
-    grouped_bar(anes, "Anestesias", prefix=f"{unidade}_anes")
+    grouped_bar(esp, "Consultas especializadas", prefix=f"{unidade}_esp", unidade=unidade)
+    grouped_bar(exames, "Exames internos", prefix=f"{unidade}_exames", unidade=unidade)
+    grouped_bar(cir, "Procedimentos cirúrgicos", prefix=f"{unidade}_cir", unidade=unidade)
+    grouped_bar(anes, "Anestesias", prefix=f"{unidade}_anes", unidade=unidade)
 
 def render_generic(df, unidade, paineis):
     st.subheader(unidade)
