@@ -8,7 +8,77 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+USUARIOS_APP = {
+    "admin": "Mudar36315515#26%",
+    "vittor": "patris2026",
+    "wendel": "inovar2026",
+    "guilherme": "patris2026",
+    "denis": "inovar2026",
+}
+
+def render_login():
+    st.markdown("""
+        <style>
+        .login-box {
+            max-width: 420px;
+            margin: 80px auto;
+            padding: 32px 28px;
+            background: white;
+            border-radius: 18px;
+            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+            border: 1px solid #E5E7EB;
+        }
+        .login-title {
+            text-align: center;
+            font-size: 28px;
+            font-weight: 800;
+            color: #0F172A;
+            margin-bottom: 8px;
+        }
+        .login-subtitle {
+            text-align: center;
+            font-size: 14px;
+            color: #64748B;
+            margin-bottom: 24px;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div class="login-box">', unsafe_allow_html=True)
+    st.markdown('<div class="login-title">🔐 Acesso ao Painel</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-subtitle">Informe usuário e senha para continuar</div>', unsafe_allow_html=True)
+
+    usuario = st.text_input("Usuário")
+    senha = st.text_input("Senha", type="password")
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        entrar = st.button("Entrar", use_container_width=True)
+
+    if entrar:
+        usuario_ok = usuario in USUARIOS_APP
+        senha_ok = usuario_ok and USUARIOS_APP[usuario] == senha
+
+        if usuario_ok and senha_ok:
+            st.session_state["autenticado"] = True
+            st.session_state["usuario_logado"] = usuario
+            st.rerun()
+        else:
+            st.error("Usuário ou senha inválidos.")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+def check_login():
+    if "autenticado" not in st.session_state:
+        st.session_state["autenticado"] = False
+
+    if not st.session_state["autenticado"]:
+        render_login()
+        st.stop()
+
 st.set_page_config(page_title="Painel de Gestão Patris", page_icon="📊", layout="wide")
+
+check_login()
 
 st.markdown("""
 <style>
