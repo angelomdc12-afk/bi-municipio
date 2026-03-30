@@ -170,11 +170,27 @@ div[data-testid="stPlotlyChart"] {
 </style>
 """, unsafe_allow_html=True)
 
-MESES = ["MARÇO.26","ABRIL.26","MAIO.26","JUNHO.26","JULHO.26","AGOSTO.26","SETEMBRO.26","OUTUBRO.26","NOVEMBRO.26","DEZEMBRO.26","JANEIRO.27","FEVEREIRO.27"]
+MESES = [
+    "MARCO.26", "ABRIL.26", "MAIO.26", "JUNHO.26",
+    "JULHO.26", "AGOSTO.26", "SETEMBRO.26", "OUTUBRO.26",
+    "NOVEMBRO.26", "DEZEMBRO.26", "JANEIRO.27", "FEVEREIRO.27"
+]
+
 MESES_LABEL = {
-    "MARÇO.26":"Mar/26","ABRIL.26":"Abr/26","MAIO.26":"Mai/26","JUNHO.26":"Jun/26","JULHO.26":"Jul/26","AGOSTO.26":"Ago/26",
-    "SETEMBRO.26":"Set/26","OUTUBRO.26":"Out/26","NOVEMBRO.26":"Nov/26","DEZEMBRO.26":"Dez/26","JANEIRO.27":"Jan/27","FEVEREIRO.27":"Fev/27"
+    "MARCO.26": "Mar/26",
+    "ABRIL.26": "Abr/26",
+    "MAIO.26": "Mai/26",
+    "JUNHO.26": "Jun/26",
+    "JULHO.26": "Jul/26",
+    "AGOSTO.26": "Ago/26",
+    "SETEMBRO.26": "Set/26",
+    "OUTUBRO.26": "Out/26",
+    "NOVEMBRO.26": "Nov/26",
+    "DEZEMBRO.26": "Dez/26",
+    "JANEIRO.27": "Jan/27",
+    "FEVEREIRO.27": "Fev/27"
 }
+
 RISK_COLORS = {
     "NÃO URGENTE (AZUL)": "#1E3A8A",
     "POUCO URGENTE (VERDE)": "#16A34A",
@@ -229,25 +245,57 @@ def normalize_value(v):
         return float(v)
     return v
 
+
+def normalize_text(value):
+    if value is None:
+        return None
+
+    import unicodedata
+    import re
+
+    text = str(value).strip().upper()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.replace("\n", " ").replace("\r", " ").replace("\t", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+
+    return text if text else None
+
+
 def row_values(ws, r, n=14):
-    return [ws.cell(r, c).value for c in range(1, n+1)]
+    return [ws.cell(r, c).value for c in range(1, n + 1)]
+
 
 def is_month_row(vals):
-    months = [str(v).strip().upper() for v in vals[2:14] if v is not None]
+    months = [normalize_text(v) for v in vals[2:14] if v is not None]
     return len(months) >= 3 and all(m in MESES for m in months)
+
 
 def parse_sheet(ws, sheet_name):
     rows = []
     unidade = str(ws["A2"].value).strip() if ws["A2"].value else sheet_name
+    unidade_norm = normalize_text(unidade)
+
     painel = None
+    painel_norm = None
     meses = None
+
+    labels_especiais = {
+        "META",
+        "MEDIA DIARIA",
+        "MÉDIA DIÁRIA",
+        "MEDIA DIARIA",
+    }
 
     for r in range(1, ws.max_row + 1):
         vals = row_values(ws, r)
         a, b = vals[0], vals[1]
 
         if is_month_row(vals):
-            meses = [str(ws.cell(r, c).value).strip().upper() if ws.cell(r, c).value is not None else None for c in range(3, 15)]
+            meses = [
+                normalize_text(ws.cell(r, c).value) if ws.cell(r, c).value is not None else None
+                for c in range(3, 15)
+            ]
             continue
 
         if not any(v is not None for v in vals[2:14]):
@@ -256,31 +304,39 @@ def parse_sheet(ws, sheet_name):
         a_str = a.strip() if isinstance(a, str) else None
         b_str = b.strip() if isinstance(b, str) else None
 
-        # Ignore generic header row
-        if a_str == "INDICADOR":
+        a_norm = normalize_text(a_str)
+        b_norm = normalize_text(b_str)
+
+        if a_norm == "INDICADOR":
             continue
 
-        if a_str and a_str not in ["META", "MÉDIA DIÁRIA", "MEDIA DIÁRIA", "MEDIA DIARIA"] and b_str:
+        if a_norm and a_norm not in labels_especiais and b_norm:
             painel = a_str
+            painel_norm = a_norm
             serie = b_str
-        elif a_str and a_str not in ["META", "MÉDIA DIÁRIA", "MEDIA DIÁRIA", "MEDIA DIARIA"] and not b_str:
+        elif a_norm and a_norm not in labels_especiais and not b_norm:
             painel = a_str
+            painel_norm = a_norm
             serie = a_str
-        elif a_str in ["META", "MÉDIA DIÁRIA", "MEDIA DIÁRIA", "MEDIA DIARIA"] and painel:
+        elif a_norm in labels_especiais and painel:
             serie = a_str
-        elif b_str and painel:
+        elif b_norm and painel:
             serie = b_str
         else:
             continue
+
+        serie_norm = normalize_text(serie)
 
         for i, c in enumerate(range(3, 15)):
             mes = meses[i] if meses and i < len(meses) else None
             rows.append({
                 "aba": sheet_name,
                 "unidade": unidade,
+                "unidade_norm": unidade_norm,
                 "painel": painel,
+                "painel_norm": painel_norm,
                 "serie": serie,
-                "serie_norm": str(serie).strip().upper(),
+                "serie_norm": serie_norm,
                 "mes": mes,
                 "mes_label": MESES_LABEL.get(mes, mes),
                 "valor": normalize_value(ws.cell(r, c).value),
@@ -290,8 +346,9 @@ def parse_sheet(ws, sheet_name):
     if not df.empty:
         df["valor_num"] = pd.to_numeric(df["valor"], errors="coerce")
         df["mes"] = pd.Categorical(df["mes"], categories=MESES, ordered=True)
-        df = df.sort_values(["unidade", "painel", "serie", "mes"])
+        df = df.sort_values(["unidade_norm", "painel_norm", "serie_norm", "mes"])
     return df
+
 
 @st.cache_data(show_spinner=False)
 def load_workbook_data(file_bytes=None):
@@ -312,73 +369,119 @@ def load_workbook_data(file_bytes=None):
         "INDICADORES ATENÇÃO SECUNDÁRIA",
         "INDICADORES SAÚDE MENTAL",
         "INDICADORES ATENÇÃO PRIMÁRIA",
+        "INDICADORES RH"
     ]
+
     frames = []
     for s in sheet_order:
         if s in wb.sheetnames:
             part = parse_sheet(wb[s], s)
             if not part.empty:
                 frames.append(part)
+
     if not frames:
         return pd.DataFrame(), source_name
+
     data = pd.concat(frames, ignore_index=True)
     return data, source_name
 
-
+@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False)
 @st.cache_data(show_spinner=False)
 def load_metas_data(file_bytes=None):
+    colunas_padrao = ["categoria", "categoria_norm", "mes", "mes_label", "meta", "meta_total"]
+
     if file_bytes is None:
         path = local_excel_path()
         if not path:
-            return pd.DataFrame()
+            return pd.DataFrame(columns=colunas_padrao)
         wb = openpyxl.load_workbook(path, data_only=True)
     else:
         wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True)
 
-    sheet_name = "METAS DO PLANO DE TRABALHO"
-    if sheet_name not in wb.sheetnames:
-        return pd.DataFrame()
+    nome_aba = "METAS DO PLANO DE TRABALHO"
+    if nome_aba not in wb.sheetnames:
+        return pd.DataFrame(columns=colunas_padrao)
 
-    ws = wb[sheet_name]
-    meses = []
-    for c in range(3, 15):
-        valor = ws.cell(3, c).value
-        meses.append(str(valor).strip().upper() if valor else None)
+    ws = wb[nome_aba]
 
     rows = []
-    for r in range(4, ws.max_row + 1, 2):
-        categoria = ws.cell(r, 2).value
-        if categoria is None:
+    meses = None
+    categoria_atual = None
+
+    for r in range(1, ws.max_row + 1):
+        vals = [ws.cell(r, c).value for c in range(1, 15)]
+
+        linha_meses = [normalize_text(v) for v in vals[2:14] if v is not None]
+        if len(linha_meses) >= 3 and all(m in MESES for m in linha_meses):
+            meses = [normalize_text(v) if v is not None else None for v in vals[2:14]]
             continue
 
-        categoria = str(categoria).strip()
-        if categoria.upper().startswith("TOTAL GERAL"):
+        col_b = vals[1]
+        col_b_norm = normalize_text(col_b)
+
+        if not col_b_norm:
             continue
 
-        meta_row = r + 1 if r + 1 <= ws.max_row else None
-        total_meta = normalize_value(ws.cell(meta_row, 15).value) if meta_row else None
+        if col_b_norm not in ["META", "TOTAL GERAL"]:
+            categoria_atual = str(col_b).strip()
+            continue
 
-        for idx, c in enumerate(range(3, 15)):
-            mes = meses[idx] if idx < len(meses) else None
-            rows.append({
-                "categoria": categoria,
-                "categoria_norm": categoria.upper(),
-                "mes": mes,
-                "mes_label": MESES_LABEL.get(mes, mes),
-                "meta": normalize_value(ws.cell(meta_row, c).value) if meta_row else None,
-                "meta_total": total_meta,
-            })
+        if col_b_norm == "META" and categoria_atual and meses:
+            meta_total = 0.0
 
-    df = pd.DataFrame(rows)
+            for i, c in enumerate(range(3, 15)):
+                mes = meses[i] if i < len(meses) else None
+                valor = normalize_value(ws.cell(r, c).value)
+                valor_num = pd.to_numeric(pd.Series([valor]), errors="coerce").iloc[0]
+
+                if pd.notna(valor_num):
+                    meta_total += float(valor_num)
+
+                rows.append({
+                    "categoria": categoria_atual,
+                    "categoria_norm": normalize_text(categoria_atual),
+                    "mes": mes,
+                    "mes_label": MESES_LABEL.get(mes, mes),
+                    "meta": valor_num if pd.notna(valor_num) else None,
+                    "meta_total": None
+                })
+
+    df = pd.DataFrame(rows, columns=colunas_padrao)
+
     if not df.empty:
-        df["meta"] = pd.to_numeric(df["meta"], errors="coerce")
-        df["meta_total"] = pd.to_numeric(df["meta_total"], errors="coerce")
         df["mes"] = pd.Categorical(df["mes"], categories=MESES, ordered=True)
-        df = df.sort_values(["categoria", "mes"])
+        df = df.sort_values(["categoria_norm", "mes"])
+
+        totais = (
+            df.groupby("categoria_norm", as_index=False)["meta"]
+            .sum()
+            .rename(columns={"meta": "meta_total_calc"})
+        )
+
+        df = df.merge(totais, on="categoria_norm", how="left")
+        df["meta_total"] = df["meta_total_calc"]
+        df = df.drop(columns=["meta_total_calc"])
+
     return df
 
 def filter_panel(df, unidade, painel):
-    return df[(df["unidade"] == unidade) & (df["painel"] == painel)].copy()
+    unidade_norm = normalize_text(unidade)
+    painel_norm = normalize_text(painel)
+
+    # DEBUG TEMPORÁRIO (pode remover depois)
+    df_test = df[df["unidade_norm"] == unidade_norm]
+
+    # tenta match exato
+    result = df_test[df_test["painel_norm"] == painel_norm]
+
+    # 🔥 FALLBACK INTELIGENTE
+    if result.empty:
+        result = df_test[
+            df_test["painel_norm"].str.contains(painel_norm, na=False)
+        ]
+
+    return result.copy()
 
 def format_int(x):
     if pd.isna(x):
@@ -689,6 +792,7 @@ def build_metas_panel(data, metas_df):
         atingido = percent_atingido(executado, item.meta)
         saldo = None
         saldo_pct = None
+
         if item.meta is not None and not pd.isna(item.meta):
             saldo = executado - item.meta
             if item.meta != 0:
@@ -1952,6 +2056,264 @@ def render_generic(df, unidade, paineis):
     for i,painel in enumerate(paineis, start=1):
         grouped_bar(filter_panel(df, unidade, painel), painel.title(), prefix=f"{unidade}_{i}")
 
+def rh_get_latest_month(panel_df):
+    if panel_df is None or panel_df.empty:
+        return None
+
+    work = panel_df.copy()
+
+    # considera apenas linhas com mês e valor numérico preenchido
+    work = work.dropna(subset=["mes"]).copy()
+    work = work[work["valor_num"].notna()].copy()
+
+    if work.empty:
+        return None
+
+    return work["mes"].max()
+
+
+def rh_get_value_and_meta(panel_df):
+    if panel_df is None or panel_df.empty:
+        return {
+            "mes": None,
+            "valor": None
+        }
+
+    latest_mes = rh_get_latest_month(panel_df)
+    if latest_mes is None:
+        return {
+            "mes": None,
+            "valor": None
+        }
+
+    recorte = panel_df[panel_df["mes"] == latest_mes].copy()
+    if recorte.empty:
+        return {
+            "mes": latest_mes,
+            "valor": None
+        }
+
+    valor_df = recorte[
+        ~recorte["serie_norm"].isin(["META", "MÉDIA DIÁRIA", "MEDIA DIÁRIA", "MEDIA DIARIA", "TOTAL"])
+    ].copy()
+
+    # fallback: se o indicador vier com a própria série igual ao painel
+    if valor_df.empty:
+        valor_df = recorte.copy()
+
+    valor_df = valor_df[valor_df["valor_num"].notna()].copy()
+
+    valor = valor_df["valor_num"].sum() if not valor_df.empty else None
+
+    if valor is not None and pd.isna(valor):
+        valor = None
+
+    return {
+        "mes": latest_mes,
+        "valor": float(valor) if valor is not None else None
+    }
+
+
+def rh_is_lower_better(nome_indicador):
+    nome_norm = normalize_text(nome_indicador) or ""
+    indicadores_menor_melhor = {
+        "TAXA DE TURNOVER",
+        "ABSENTEISMO",
+        "ACIDENTES DE TRABALHO",
+    }
+    return nome_norm in indicadores_menor_melhor
+
+
+def rh_compute_status(nome_indicador, valor, meta):
+    """
+    Regras:
+    - sem meta -> neutro
+    - maior é melhor:
+        >=100% da meta = verde
+        entre 85% e 99,9% = amarelo
+        abaixo de 85% = vermelho
+    - menor é melhor:
+        <=100% da meta = verde
+        até 115% da meta = amarelo
+        acima de 115% = vermelho
+    """
+    if valor is None or meta is None or pd.isna(valor) or pd.isna(meta) or meta == 0:
+        return {
+            "status": "Sem meta",
+            "cor": "#64748B",
+            "pct": None,
+            "comparacao": "Sem comparativo"
+        }
+
+    menor_melhor = rh_is_lower_better(nome_indicador)
+    pct = (valor / meta) * 100
+
+    if menor_melhor:
+        if valor <= meta:
+            status = "Meta atingida"
+            cor = "#16A34A"
+        elif valor <= meta * 1.15:
+            status = "Atenção"
+            cor = "#F59E0B"
+        else:
+            status = "Abaixo da meta"
+            cor = "#DC2626"
+    else:
+        if valor >= meta:
+            status = "Meta atingida"
+            cor = "#16A34A"
+        elif valor >= meta * 0.85:
+            status = "Atenção"
+            cor = "#F59E0B"
+        else:
+            status = "Abaixo da meta"
+            cor = "#DC2626"
+
+    diferenca = valor - meta
+    if diferenca > 0:
+        comparacao = f"+{rh_format_value(nome_indicador, abs(diferenca))} vs meta"
+    elif diferenca < 0:
+        comparacao = f"-{rh_format_value(nome_indicador, abs(diferenca))} vs meta"
+    else:
+        comparacao = "Em linha com a meta"
+
+    return {
+        "status": status,
+        "cor": cor,
+        "pct": pct,
+        "comparacao": comparacao
+    }
+
+def rh_format_value(nome_indicador, valor):
+    if valor is None or pd.isna(valor):
+        return "-"
+
+    nome_norm = normalize_text(nome_indicador) or ""
+
+    # indicadores percentuais
+    if (
+        "%" in str(nome_indicador)
+        or "TAXA" in nome_norm
+        or "ABSENTEISMO" in nome_norm
+    ):
+        return f"{valor:,.1f}%".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    # números inteiros
+    if float(valor).is_integer():
+        return f"{int(valor):,}".replace(",", ".")
+
+    # números decimais
+    return f"{valor:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".")
+RH_ICONS = {
+    "TOTAL DE COLABORADORES CLT": "👥",
+    "TOTAL DE MÉDICOS": "🩺",
+    "TOTAL DE ENFERMAGEM": "💉",
+    "ADMISSÕES": "📥",
+    "DESLIGAMENTOS": "📤",
+    "TAXA DE TURNOVER": "🔄",
+    "ABSENTEÍSMO": "⏱️",
+    "AFASTAMENTOS": "🏥",
+    "ACIDENTES DE TRABALHO": "⚠️",
+}
+
+def render_rh_indicator_card(nome_indicador, panel_df):
+    info = rh_get_value_and_meta(panel_df)
+
+    valor = info["valor"]
+    mes = info["mes"]
+
+    icone = RH_ICONS.get(nome_indicador, "📊")
+    titulo = f"{icone} {nome_indicador}"
+
+    valor_fmt = rh_format_value(nome_indicador, valor)
+    mes_fmt = MESES_LABEL.get(mes, "-") if mes is not None else "-"
+
+    card_html = (
+        f'<div style="'
+        f'background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);'
+        f'border: 1px solid #E2E8F0;'
+        f'border-radius: 22px;'
+        f'padding: 18px 18px 16px 18px;'
+        f'box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);'
+        f'min-height: 220px;'
+        f'margin-bottom: 14px;'
+        f'display:flex;'
+        f'flex-direction:column;'
+        f'justify-content:space-between;'
+        f'">'
+
+        f'<div>'
+        f'  <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px;">'
+        f'      <div style="font-size:14px; font-weight:800; color:#0F172A; line-height:1.35;">'
+        f'          {titulo}'
+        f'      </div>'
+        f'      <div style="'
+        f'          background:#64748B;'
+        f'          color:#FFFFFF;'
+        f'          font-size:11px;'
+        f'          font-weight:700;'
+        f'          padding:6px 10px;'
+        f'          border-radius:999px;'
+        f'          white-space:nowrap;'
+        f'      ">'
+        f'          Sem meta'
+        f'      </div>'
+        f'  </div>'
+
+        f'  <div style="font-size:12px; color:#64748B; margin-bottom:12px;">Referência: {mes_fmt}</div>'
+
+        f'  <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:16px; padding:14px 12px;">'
+        f'      <div style="font-size:11px; color:#64748B; font-weight:700; text-transform:uppercase; margin-bottom:6px;">Valor atual</div>'
+        f'      <div style="font-size:30px; font-weight:800; color:#0F172A; line-height:1;">{valor_fmt}</div>'
+        f'  </div>'
+        f'</div>'
+
+        f'<div style="margin-top:14px; font-size:12px; color:#94A3B8;">Indicador mensal consolidado</div>'
+
+        f'</div>'
+    )
+
+    st.markdown(card_html, unsafe_allow_html=True)
+
+def render_rh_page(df):
+    unidade = "RH"
+    st.subheader("Gestão de Pessoas")
+
+    work_df = df.copy()
+
+    # respeita o filtro lateral de período já existente no app
+    if "mes_label" in work_df.columns and "meses_selecionados" in globals():
+        work_df = work_df[work_df["mes_label"].isin(meses_selecionados)].copy()
+
+    indicadores_rh = [
+        "TOTAL DE COLABORADORES CLT",
+        "TOTAL DE MÉDICOS",
+        "TOTAL DE ENFERMAGEM",
+        "ADMISSÕES",
+        "DESLIGAMENTOS",
+        "TAXA DE TURNOVER",
+        "ABSENTEÍSMO",
+        "AFASTAMENTOS",
+        "ACIDENTES DE TRABALHO",
+]
+
+    paineis = {
+        indicador: filter_panel(work_df, unidade, indicador)
+        for indicador in indicadores_rh
+    }
+
+    section_start(
+        "Painel de indicadores de RH",
+        "Leitura executiva dos indicadores da aba INDICADORES RH com valor atual e referência mensal"
+    )
+
+    cols = st.columns(3)
+    for idx, indicador in enumerate(indicadores_rh):
+        with cols[idx % 3]:
+            render_rh_indicator_card(indicador, paineis[indicador])
+
+    section_end()
+
 st.markdown("""
 <h1 style="margin-bottom:0;">
 <p style="margin-top:0; color:#64748B; font-size:16px;">
@@ -1976,7 +2338,16 @@ st.sidebar.success(f"Fonte: {source_name}")
 st.sidebar.markdown("## Navegação")
 pagina = st.sidebar.radio(
     "Selecione a página",
-    ["UPA Luziânia", "UPA Jardim Ingá", "HMJI", "Atenção Secundária", "Saúde Mental", "Atenção Primária", "Metas do Plano"]
+    [
+        "UPA Luziânia",
+        "UPA Jardim Ingá",
+        "HMJI",
+        "Atenção Secundária",
+        "Saúde Mental",
+        "Atenção Primária",
+        "Gestão de Pessoas",
+        "Metas do Plano"
+    ]
 )
 
 st.sidebar.markdown("## Filtros")
@@ -1986,11 +2357,10 @@ meses_selecionados = st.sidebar.multiselect(
     default=[MESES_LABEL[m] for m in MESES]
 )
 
-if meses_selecionados:
-    data = data[data["mes_label"].isin(meses_selecionados)].copy()
+if "mes_label" in metas_data.columns:
     metas_data = metas_data[metas_data["mes_label"].isin(meses_selecionados)].copy()
 else:
-    metas_data = metas_data.copy()
+    metas_data = pd.DataFrame(columns=["indicador", "indicador_norm", "mes", "mes_label", "valor"])
 
 hero_header(pagina, source_name, meses_selecionados)
 
@@ -2017,6 +2387,8 @@ elif pagina == "Atenção Primária":
         "CONSULTAS MÉDICAS",
         "NÍVEL SUPERIOR (EXCETO MÉDICO)",
     ])
+elif pagina == "Gestão de Pessoas":
+    render_rh_page(data)
 else:
     render_metas_page(data, metas_data)
 
