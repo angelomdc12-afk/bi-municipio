@@ -1,4 +1,5 @@
 import datetime as dt
+from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -7,7 +8,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-
+    
 USUARIOS_APP = {
     "admin": "Mudar36315515#26%",
     "vittor": "patris2026",
@@ -15,19 +16,20 @@ USUARIOS_APP = {
     "guilherme": "patris2026",
     "denis": "inovar2026",
 }
+TEMPO_SESSAO_HORAS = 8
 
 def render_login():
     st.markdown("""
-        <style>
-        .login-box {
-            max-width: 420px;
-            margin: 80px auto;
-            padding: 32px 28px;
-            background: white;
-            border-radius: 18px;
-            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
-            border: 1px solid #E5E7EB;
-        }
+    <style>
+    .login-box {
+        max-width: 420px;
+        margin: 80px auto;
+        padding: 32px 28px;
+        background: white;
+        border-radius: 18px;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+        border: 1px solid #E5E7EB;
+    }
         .login-title {
             text-align: center;
             font-size: 28px;
@@ -41,6 +43,224 @@ def render_login():
             color: #64748B;
             margin-bottom: 24px;
         }
+/* ===== FILTRO DE PERÍODO / MULTISELECT ===== */
+
+/* caixa externa do multiselect */
+div[data-testid="stPlotlyChart"] {
+    background: #071224;
+    border: none;
+    border-radius: 22px;
+    padding: 0.35rem 0.35rem 0.15rem 0.35rem;
+    box-shadow: none;
+}
+                
+div[data-testid="stPlotlyChart"] > div {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+}                
+
+/* hover */
+section[data-testid="stSidebar"] .stMultiSelect > div > div:hover {
+    border-color: rgba(255,255,255,0.18) !important;
+    background: rgba(255,255,255,0.08) !important;
+}
+
+/* foco */
+section[data-testid="stSidebar"] .stMultiSelect > div > div:focus-within {
+    border-color: #7CC0F2 !important;
+    box-shadow: 0 0 0 1px rgba(124,192,242,0.35) !important;
+    background: rgba(255,255,255,0.09) !important;
+}
+
+/* tags selecionadas */
+section[data-testid="stSidebar"] .stMultiSelect div[data-baseweb="tag"] {
+    background: rgba(255,255,255,0.14) !important;
+    border: 1px solid rgba(255,255,255,0.14) !important;
+    border-radius: 12px !important;
+    color: #FFFFFF !important;
+    font-weight: 700 !important;
+    padding: 3px 8px !important;
+    margin: 3px !important;
+}
+
+/* texto dentro da tag */
+section[data-testid="stSidebar"] .stMultiSelect div[data-baseweb="tag"] span {
+    color: #FFFFFF !important;
+    font-size: 13px !important;
+}
+
+/* botão x da tag */
+section[data-testid="stSidebar"] .stMultiSelect div[data-baseweb="tag"] svg {
+    fill: rgba(255,255,255,0.88) !important;
+}
+
+/* campo de digitação */
+section[data-testid="stSidebar"] .stMultiSelect input {
+    color: #FFFFFF !important;
+}
+
+/* placeholder */
+section[data-testid="stSidebar"] .stMultiSelect input::placeholder {
+    color: rgba(255,255,255,0.55) !important;
+}
+
+/* setinha do select */
+section[data-testid="stSidebar"] .stMultiSelect svg {
+    fill: rgba(255,255,255,0.75) !important;
+}
+/* ===== UPLOAD COMPACTO ===== */
+section[data-testid="stSidebar"] .stFileUploader {
+    padding: 6px !important;
+    border-radius: 12px !important;
+    margin-bottom: 10px !important;
+    background: rgba(255,255,255,0.04) !important;
+    border: 1px solid rgba(255,255,255,0.06) !important;
+}
+
+section[data-testid="stSidebar"] .stFileUploader section {
+    padding: 8px 8px !important;
+    border-radius: 10px !important;
+    min-height: auto !important;
+    background: rgba(5,10,20,0.82) !important;
+}
+
+section[data-testid="stSidebar"] .stFileUploader small {
+    font-size: 10px !important;
+    line-height: 1.2 !important;
+}
+
+section[data-testid="stSidebar"] .stFileUploader button {
+    padding: 4px 8px !important;
+    font-size: 11px !important;
+    min-height: 30px !important;
+    border-radius: 8px !important;
+}
+
+section[data-testid="stSidebar"] .stFileUploader label {
+    font-size: 12px !important;
+    margin-bottom: 4px !important;
+}
+st.sidebar.markdown("##### Atualizar base")
+/* ===== UPLOAD COMO BOTÃO DISCRETO ===== */
+
+/* remove caixa grande */
+section[data-testid="stSidebar"] .stFileUploader section {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+}
+
+/* remove texto padrão */
+section[data-testid="stSidebar"] .stFileUploader small {
+    display: none !important;
+}
+
+/* remove título padrão */
+section[data-testid="stSidebar"] .stFileUploader label {
+    display: none !important;
+}
+
+/* container geral */
+section[data-testid="stSidebar"] .stFileUploader {
+    margin-bottom: 10px !important;
+    padding: 0 !important;
+    background: transparent !important;
+    border: none !important;
+}
+
+/* BOTÃO */
+section[data-testid="stSidebar"] .stFileUploader button {
+    width: 100% !important;
+    background: linear-gradient(135deg, #1E6BA8 0%, #2B7BBB 100%) !important;
+    border: none !important;
+    border-radius: 10px !important;
+    padding: 10px !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: #FFFFFF !important;
+    transition: all 0.2s ease !important;
+}
+
+/* hover */
+section[data-testid="stSidebar"] .stFileUploader button:hover {
+    background: linear-gradient(135deg, #2B7BBB 0%, #3C8ED1 100%) !important;
+    transform: translateY(-1px);
+}
+
+/* quando arquivo carregado */
+section[data-testid="stSidebar"] .stFileUploader div[data-testid="stFileUploaderDropzone"] {
+    background: transparent !important;
+}  
+                /* ===== UPLOAD REALMENTE COMPACTO ===== */
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] {
+    margin-bottom: 8px !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] > div {
+    padding: 0 !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
+    padding: 6px !important;
+    min-height: auto !important;
+    background: transparent !important;
+    border: none !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] > div {
+    padding: 0 !important;
+    gap: 6px !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] small {
+    display: none !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] div {
+    font-size: 12px !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button {
+    padding: 6px 10px !important;
+    min-height: 32px !important;
+    font-size: 12px !important;
+    border-radius: 10px !important;
+}
+
+section[data-testid="stSidebar"] .stFileUploader {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+} 
+                /* ===== UPLOAD MAIS BAIXO E MENOR ===== */
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
+    min-height: 90px !important;
+    padding: 8px 10px !important;
+    border-radius: 12px !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] > div {
+    min-height: 70px !important;
+    gap: 4px !important;
+    justify-content: center !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] div {
+    font-size: 11px !important;
+    line-height: 1.2 !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] small {
+    display: none !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button {
+    padding: 4px 8px !important;
+    min-height: 28px !important;
+    font-size: 11px !important;
+    border-radius: 8px !important;
+}     
         </style>
     """, unsafe_allow_html=True)
 
@@ -62,6 +282,8 @@ def render_login():
         if usuario_ok and senha_ok:
             st.session_state["autenticado"] = True
             st.session_state["usuario_logado"] = usuario
+            st.session_state["login_em"] = dt.datetime.now()
+            st.session_state["expira_em"] = dt.datetime.now() + timedelta(hours=TEMPO_SESSAO_HORAS)
             st.rerun()
         else:
             st.error("Usuário ou senha inválidos.")
@@ -71,6 +293,15 @@ def render_login():
 def check_login():
     if "autenticado" not in st.session_state:
         st.session_state["autenticado"] = False
+
+    if st.session_state["autenticado"]:
+        expira_em = st.session_state.get("expira_em")
+
+        if expira_em and dt.datetime.now() > expira_em:
+            st.session_state["autenticado"] = False
+            st.session_state["usuario_logado"] = None
+            st.session_state["login_em"] = None
+            st.session_state["expira_em"] = None
 
     if not st.session_state["autenticado"]:
         render_login()
@@ -83,13 +314,15 @@ check_login()
 st.markdown("""
 <style>
 
-/* ===== APP ===== */
-.stApp {
-    background:
-        radial-gradient(circle at top left, rgba(15,108,189,0.10), transparent 28%),
-        linear-gradient(180deg, #F4F7FB 0%, #EEF3F8 100%);
+[data-testid="stAppViewContainer"] {
+    background: #F8FAFC;
 }
 
+[data-testid="stMain"] {
+    background: transparent;
+}
+            
+/* ===== APP ===== */
 .block-container {
     padding-top: 1.1rem;
     padding-bottom: 2rem;
@@ -100,18 +333,210 @@ st.markdown("""
 
 /* ===== SIDEBAR ===== */
 section[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #0F172A 0%, #111827 100%);
-    border-right: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(180deg, #0F4C81 0%, #0B2E4E 100%);
+    border-right: 1px solid rgba(255,255,255,0.06);
+}
+
+section[data-testid="stSidebar"] > div {
+    padding-top: 0.8rem;
 }
 
 section[data-testid="stSidebar"] * {
     color: #F8FAFC !important;
 }
 
+/* MENU */
+section[data-testid="stSidebar"] div[role="radiogroup"] label {
+    background: rgba(255,255,255,0.05);
+    border-radius: 14px;
+    padding: 10px;
+    margin-bottom: 8px;
+}
+
+section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
+    background: rgba(255,255,255,0.10);
+}
+
+/* FILTROS */
+section[data-testid="stSidebar"] div[data-baseweb="select"] > div {
+    background: rgba(255,255,255,0.06);
+    border-radius: 12px;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+
+st.markdown("""
+<style>
+
+/* ===== APP ===== */
+.block-container {{
+    padding-top: 1.1rem;
+    padding-bottom: 2rem;
+    padding-left: 1.6rem;
+    padding-right: 1.6rem;
+    max-width: 100%;
+}}
+
+/* ===== SIDEBAR CLEAN (OPÇÃO 1) ===== */
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #0F4C81 0%, #0B2E4E 100%);
+    border-right: 1px solid rgba(255,255,255,0.06);
+}
+
+/* espaçamento geral */
+section[data-testid="stSidebar"] > div {
+    padding-top: 0.8rem;
+}
+
+/* textos */
+section[data-testid="stSidebar"] * {
+    color: #F8FAFC !important;
+}
+
+/* títulos */
 section[data-testid="stSidebar"] .stMarkdown h2,
 section[data-testid="stSidebar"] .stMarkdown h3 {
+    font-weight: 800 !important;
+    margin-bottom: 0.5rem;
+}
+
+/* ===== BLOCO UPLOAD ===== */
+section[data-testid="stSidebar"] .stFileUploader {
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 18px;
+    padding: 14px 12px 10px 12px;
+    margin-bottom: 18px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+}
+
+/* área interna do drag and drop */
+section[data-testid="stSidebar"] .stFileUploader section {
+    background: rgba(5,10,20,0.88) !important;
+    border: 1px dashed rgba(255,255,255,0.10) !important;
+    border-radius: 14px !important;
+    padding: 18px 12px !important;
+    min-height: auto !important;
+}
+
+/* texto principal do upload */
+section[data-testid="stSidebar"] .stFileUploader section small,
+section[data-testid="stSidebar"] .stFileUploader section div {
+    color: #F8FAFC !important;
+}
+
+/* botão browse */
+section[data-testid="stSidebar"] .stFileUploader button {
+    background: rgba(255,255,255,0.10) !important;
+    border: 1px solid rgba(255,255,255,0.14) !important;
+    border-radius: 12px !important;
     color: #FFFFFF !important;
-    letter-spacing: -0.2px;
+    font-weight: 600 !important;
+}
+
+section[data-testid="stSidebar"] .stFileUploader button:hover {
+    background: rgba(255,255,255,0.16) !important;
+    border-color: rgba(255,255,255,0.22) !important;
+}
+
+/* ===== RADIO (MENU) ===== */
+section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 14px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    transition: all 0.18s ease;
+}
+
+/* hover menu */
+section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:hover {
+    background: rgba(255,255,255,0.10);
+    transform: translateX(3px);
+}
+
+/* texto menu */
+section[data-testid="stSidebar"] div[role="radiogroup"] span {
+    font-weight: 600;
+}
+
+/* ===== SELECT / FILTROS ===== */
+section[data-testid="stSidebar"] div[data-baseweb="select"] > div,
+section[data-testid="stSidebar"] div[data-baseweb="input"] > div {
+    background: rgba(255,255,255,0.06) !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    border-radius: 14px !important;
+    min-height: 44px;
+}
+
+/* foco filtro */
+section[data-testid="stSidebar"] div[data-baseweb="select"] > div:focus-within {
+    border-color: #4DA3E6 !important;
+}
+
+/* ===== FILTRO DE PERÍODO ===== */
+
+/* caixa principal do multiselect */
+section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div {
+    background: rgba(255,255,255,0.06) !important;
+    border: 1px solid rgba(255,255,255,0.10) !important;
+    border-radius: 16px !important;
+    padding: 8px !important;
+    min-height: 54px !important;
+}
+
+/* hover */
+section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div:hover {
+    border-color: rgba(255,255,255,0.18) !important;
+    background: rgba(255,255,255,0.08) !important;
+}
+
+/* foco */
+section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div:focus-within {
+    border-color: #7CC0F2 !important;
+    box-shadow: 0 0 0 1px rgba(124,192,242,0.35) !important;
+}
+
+/* tags selecionadas */
+section[data-testid="stSidebar"] [data-testid="stMultiSelect"] [data-baseweb="tag"] {
+    background: rgba(255,255,255,0.14) !important;
+    border: 1px solid rgba(255,255,255,0.14) !important;
+    border-radius: 10px !important;
+    color: #FFFFFF !important;
+    font-weight: 700 !important;
+    margin: 4px !important;
+    padding: 2px 8px !important;
+}
+
+/* texto da tag */
+section[data-testid="stSidebar"] [data-testid="stMultiSelect"] [data-baseweb="tag"] span {
+    color: #FFFFFF !important;
+    font-size: 13px !important;
+}
+
+/* ícone x */
+section[data-testid="stSidebar"] [data-testid="stMultiSelect"] [data-baseweb="tag"] svg {
+    fill: rgba(255,255,255,0.88) !important;
+}
+
+/* input interno */
+section[data-testid="stSidebar"] [data-testid="stMultiSelect"] input {
+    color: #FFFFFF !important;
+}
+
+/* placeholder */
+section[data-testid="stSidebar"] [data-testid="stMultiSelect"] input::placeholder {
+    color: rgba(255,255,255,0.60) !important;
+}
+
+/* ===== TEXTO AUXILIAR ===== */
+section[data-testid="stSidebar"] small {
+    color: rgba(255,255,255,0.65) !important;
 }
 
 /* ===== TIPOGRAFIA ===== */
@@ -159,21 +584,22 @@ div[data-baseweb="input"] > div {
 
 /* ===== PLOTLY CONTAINER ===== */
 div[data-testid="stPlotlyChart"] {
-    background: #0B1220;
-    border: 1px solid #E2E8F0;
-    border-radius: 20px;
-    padding: 0.35rem 0.35rem 0.15rem 0.35rem;
-    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+    background: #071224 !important;
+    border: none !important;
+    border-radius: 22px !important;
+    padding: 0.35rem 0.35rem 0.15rem 0.35rem !important;
+    box-shadow: none !important;
+}
+
+div[data-testid="stPlotlyChart"] > div {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
 }
 
 /* ===== SECTION CARD ===== */
 .section-card {
-    background: linear-gradient(180deg, #FFFFFF 0%, #FBFDFF 100%);
-    border: 1px solid #E2E8F0;
-    border-radius: 22px;
-    padding: 1rem 1rem 0.6rem 1rem;
-    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
-    margin-bottom: 1rem;
+    background: transparent;
 }
 
 .section-title {
@@ -192,12 +618,12 @@ div[data-testid="stPlotlyChart"] {
 
 /* ===== HERO / TOPO ===== */
 .hero-wrap {
-    background: linear-gradient(135deg, #0F172A 0%, #12324A 50%, #0F6CBD 100%);
-    border: 1px solid rgba(255,255,255,0.05);
+    background: linear-gradient(135deg, rgba(15,108,189,0.92) 0%, rgba(37,99,235,0.88) 100%);
+    border: 1px solid rgba(255,255,255,0.20);
     border-radius: 24px;
     padding: 1.2rem 1.25rem;
     margin-bottom: 1.1rem;
-    box-shadow: 0 16px 36px rgba(15, 23, 42, 0.16);
+    box-shadow: 0 16px 36px rgba(15, 23, 42, 0.10);
 }
 
 .hero-title {
@@ -1222,10 +1648,10 @@ SEMANTIC_COLORS = {
 
     # apoio visual
     "grid": "rgba(148,163,184,0.14)",
-    "axis": "#94A3B8",
+    "axis": "#076BF7",
     "text": "#CFD7E2",
     "title": "#F6F7FB",
-    "plot_bg": "#0F172A",
+    "plot_bg": "#071224",
 
     # séries neutras
     "series_1": "#0F6CBD",
@@ -2389,7 +2815,40 @@ st.markdown("""
 <p style="margin-top:0; color:#64748B; font-size:16px;">
 </p>
 """, unsafe_allow_html=True)
-uploaded = st.sidebar.file_uploader("Planilha base (.xlsx)", type=["xlsx"])
+# ===== BOTÃO PROFISSIONAL DE UPLOAD =====
+
+st.sidebar.markdown("### Atualizar base")
+
+col1, col2 = st.sidebar.columns([1,1])
+
+with col1:
+    abrir_upload = st.button("📂 Atualizar", use_container_width=True)
+
+with col2:
+    limpar_upload = st.button("✖", use_container_width=True)
+
+if limpar_upload:
+    st.session_state.pop("uploaded_file", None)
+    st.rerun()
+
+uploaded = None
+
+if abrir_upload:
+    uploaded = st.sidebar.file_uploader(
+        "Selecionar arquivo",
+        type=["xlsx"],
+        key="upload_hidden"
+    )
+else:
+    uploaded = st.session_state.get("uploaded_file", None)
+
+# salva na sessão
+if uploaded is not None:
+    st.session_state["uploaded_file"] = uploaded
+if "uploaded_file" in st.session_state:
+    st.sidebar.success("Base atualizada")
+else:
+    st.sidebar.caption("Usando base local")
 file_bytes = uploaded.getvalue() if uploaded else None
 data, source_name = load_workbook_data(file_bytes) if uploaded else load_workbook_data(None)
 metas_data = load_metas_data(file_bytes) if uploaded else load_metas_data(None)
