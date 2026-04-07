@@ -1057,6 +1057,282 @@ def load_metas_data(file_bytes=None):
 
     return resumo[colunas_padrao].reset_index(drop=True)
 
+@st.cache_data(show_spinner=False)
+def load_financeiro_data(file_bytes=None):
+    colunas = [
+        "grupo",
+        "grupo_norm",
+        "fornecedor",
+        "fornecedor_norm",
+        "mes",
+        "mes_label",
+        "valor",
+        "valor_num",
+    ]
+
+    if file_bytes is None:
+        path = local_excel_path()
+        if not path:
+            return pd.DataFrame(columns=colunas)
+        wb = openpyxl.load_workbook(path, data_only=True)
+    else:
+        wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True)
+
+    nome_aba = "Financeiro"
+    if nome_aba not in wb.sheetnames:
+        return pd.DataFrame(columns=colunas)
+
+    ws = wb[nome_aba]
+
+    rows = []
+    meses = None
+    grupo_atual = None
+
+    for r in range(1, ws.max_row + 1):
+        vals = [ws.cell(r, c).value for c in range(1, 16)]  # A:O
+
+        linha_meses = [normalize_text(v) for v in vals[2:14] if v is not None]
+        if len(linha_meses) >= 3 and all(m in MESES for m in linha_meses):
+            meses = [normalize_text(v) if v is not None else None for v in vals[2:14]]
+            continue
+
+        col_a = vals[0]
+        col_b = vals[1]
+
+        col_a_norm = normalize_text(col_a)
+        col_b_norm = normalize_text(col_b)
+
+        if not any(v not in (None, "") for v in vals[2:14]):
+            continue
+
+        # linha de grupo / seção
+        if col_a_norm and col_a_norm != "TOTAL" and not col_b_norm:
+            grupo_atual = str(col_a).strip()
+            continue
+
+        # ignora linha TOTAL geral do bloco
+        if col_b_norm == "TOTAL":
+            continue
+
+        fornecedor = str(col_b).strip() if col_b else None
+        if not fornecedor or not meses:
+            continue
+
+        for i, c in enumerate(range(3, 15)):  # C:N
+            mes = meses[i] if i < len(meses) else None
+            valor = normalize_value(ws.cell(r, c).value)
+            valor_num = pd.to_numeric(pd.Series([valor]), errors="coerce").iloc[0]
+
+            rows.append({
+                "grupo": grupo_atual,
+                "grupo_norm": normalize_text(grupo_atual),
+                "fornecedor": fornecedor,
+                "fornecedor_norm": normalize_text(fornecedor),
+                "mes": mes,
+                "mes_label": MESES_LABEL.get(mes, mes),
+                "valor": valor,
+                "valor_num": float(valor_num) if pd.notna(valor_num) else 0.0,
+            })
+
+    df = pd.DataFrame(rows, columns=colunas)
+
+    if df.empty:
+        return pd.DataFrame(columns=colunas)
+
+    df["mes"] = pd.Categorical(df["mes"], categories=MESES, ordered=True)
+    df = df.sort_values(["grupo_norm", "fornecedor_norm", "mes"]).reset_index(drop=True)
+    return df
+
+
+def format_currency_br(x):
+    if x is None or pd.isna(x):
+        return "R$ -"
+    return f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def financeiro_kpis(fin_df):
+    work = fin_df.dropna(subset=["valor_num"]).copy()
+
+    if work.empty:
+        return {
+            "total": 0.0,
+            "media_mensal": 0.0,
+            "maior_mes": 0.0,
+            "fornecedores_ativos": 0,
+        }
+
+    total = float(work["valor_num"].sum())
+
+    mensal = (
+        work.groupby(["mes", "mes_label"], observed=False)["valor_num"]
+        .sum()
+        .reset_index()
+        .sort_values("mes")
+    )
+
+    media_mensal = float(mensal["valor_num"].mean()) if not mensal.empty else 0.0
+    maior_mes = float(mensal["valor_num"].max()) if not mensal.empty else 0.0
+
+    fornecedores_ativos = int(
+        work.groupby("fornecedor")["valor_num"].sum().gt(0).sum()
+    )
+
+    return {
+        "total": total,
+        "media_mensal": media_mensal,
+        "maior_mes": maior_mes,
+        "fornecedores_ativos": fornecedores_ativos,
+    }
+
+
+def render_financeiro_page(fin_df):
+    st.subheader("Financeiro")
+
+    if fin_df is None or fin_df.empty:
+        st.warning("A aba 'Financeiro' não foi encontrada ou está vazia.")
+        return
+
+    work = fin_df.copy()
+
+    # respeita o filtro global de período do app
+    if "meses_selecionados" in globals() and "mes_label" in work.columns:
+        work = work[work["mes_label"].isin(meses_selecionados)].copy()
+
+    work = work.dropna(subset=["valor_num"])
+    if work.empty:
+        st.info("Sem dados financeiros para o período selecionado.")
+        return
+
+    kpis = financeiro_kpis(work)
+
+    section_start(
+        "Resumo financeiro",
+        "Visão executiva da aba Financeiro com gastos consolidados no período filtrado"
+    )
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        card("Gasto total", format_currency_br(kpis["total"]), icon="💰", subtitle="Total no período")
+    with c2:
+        card("Média mensal", format_currency_br(kpis["media_mensal"]), icon="📊", subtitle="Média dos meses filtrados")
+    with c3:
+        card("Maior mês", format_currency_br(kpis["maior_mes"]), icon="📈", subtitle="Pico de gasto mensal")
+    with c4:
+        card("Fornecedores ativos", format_int(kpis["fornecedores_ativos"]), icon="🏢", subtitle="Com lançamento no período")
+    section_end()
+
+    mensal = (
+        work.groupby(["mes", "mes_label"], observed=False)["valor_num"]
+        .sum()
+        .reset_index()
+        .sort_values("mes")
+    )
+
+    section_start(
+        "Evolução mensal dos gastos",
+        "Tendência financeira consolidada por mês"
+    )
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=mensal["mes_label"],
+            y=mensal["valor_num"],
+            name="Gasto mensal",
+            marker_color=SEMANTIC_COLORS["realizado"],
+            hovertemplate="<b>Gasto mensal</b><br>Mês: %{x}<br>Valor: R$ %{y:,.2f}<extra></extra>"
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=mensal["mes_label"],
+            y=mensal["valor_num"],
+            mode="lines+markers",
+            name="Tendência",
+            line=dict(color=SEMANTIC_COLORS["media"], width=3),
+            marker=dict(size=7, color=SEMANTIC_COLORS["media"]),
+            hovertemplate="<b>Tendência</b><br>Mês: %{x}<br>Valor: R$ %{y:,.2f}<extra></extra>"
+        )
+    )
+    fig = apply_plotly_theme(
+        fig,
+        title="Gasto total por mês",
+        subtitle="Leitura mensal consolidada da aba Financeiro",
+        yaxis_title="Valor (R$)",
+        height=390,
+        legend=True,
+        legend_orientation="h"
+    )
+    fig = apply_month_axis_order(fig, mensal)
+    plot(fig, "financeiro_mensal")
+    section_end()
+
+    fornecedores = (
+        work.groupby("fornecedor", as_index=False)["valor_num"]
+        .sum()
+        .sort_values("valor_num", ascending=False)
+    )
+
+    top_fornecedores = fornecedores.head(10).copy()
+
+    section_start(
+        "Ranking de fornecedores",
+        "Maiores gastos acumulados no período filtrado"
+    )
+    fig_top = go.Figure()
+    fig_top.add_trace(
+        go.Bar(
+            x=top_fornecedores["valor_num"],
+            y=top_fornecedores["fornecedor"],
+            orientation="h",
+            name="Total",
+            marker_color=SEMANTIC_COLORS["primary_soft"],
+            hovertemplate="<b>%{y}</b><br>Total: R$ %{x:,.2f}<extra></extra>"
+        )
+    )
+    fig_top = apply_plotly_theme(
+        fig_top,
+        title="Top 10 fornecedores por gasto",
+        subtitle="Ranking consolidado do período selecionado",
+        yaxis_title="",
+        height=430,
+        legend=False
+    )
+    fig_top.update_layout(yaxis=dict(autorange="reversed"))
+    plot(fig_top, "financeiro_top_fornecedores")
+    section_end()
+
+    composicao = top_fornecedores.copy()
+    total_comp = composicao["valor_num"].sum()
+    composicao["participacao_pct"] = (
+        (composicao["valor_num"] / total_comp) * 100 if total_comp else 0
+    )
+
+    section_start(
+        "Detalhamento analítico",
+        "Tabela executiva com consolidação por fornecedor"
+    )
+    tabela = fornecedores.copy()
+    tabela["Média mensal"] = tabela["valor_num"] / max(len(mensal), 1)
+    tabela["Participação %"] = (
+        (tabela["valor_num"] / tabela["valor_num"].sum()) * 100
+        if tabela["valor_num"].sum() > 0 else 0
+    )
+
+    tabela_view = tabela.rename(columns={
+        "fornecedor": "Fornecedor",
+        "valor_num": "Total no período",
+    }).copy()
+
+    tabela_view["Total no período"] = tabela_view["Total no período"].apply(format_currency_br)
+    tabela_view["Média mensal"] = tabela_view["Média mensal"].apply(format_currency_br)
+    tabela_view["Participação %"] = tabela_view["Participação %"].apply(format_pct_br)
+
+    st.dataframe(
+        tabela_view[["Fornecedor", "Total no período", "Média mensal", "Participação %"]],
+        use_container_width=True,
+        hide_index=True
+    )
+    section_end()
+
 def filter_panel(df, unidade, painel):
     unidade_norm = normalize_text(unidade)
     painel_norm = normalize_text(painel)
@@ -3181,6 +3457,7 @@ else:
 file_bytes = uploaded.getvalue() if uploaded else None
 data, source_name = load_workbook_data(file_bytes) if uploaded else load_workbook_data(None)
 metas_data = load_metas_data(file_bytes) if uploaded else load_metas_data(None)
+financeiro_data = load_financeiro_data(file_bytes) if uploaded else load_financeiro_data(None)
 
 if data.empty:
     base = Path(__file__).parent
@@ -3204,6 +3481,7 @@ pagina = st.sidebar.radio(
         "Saúde Mental",
         "Atenção Primária",
         "Gestão de Pessoas",
+        "Financeiro",
         "Metas do Plano"
     ]
 )
@@ -3247,6 +3525,8 @@ elif pagina == "Atenção Primária":
     ])
 elif pagina == "Gestão de Pessoas":
     render_rh_page(data)
+elif pagina == "Financeiro":
+    render_financeiro_page(financeiro_data)
 else:
     render_metas_page(data, metas_data)
 
