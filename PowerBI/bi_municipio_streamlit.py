@@ -2950,7 +2950,8 @@ def render_upa_page(df, unidade):
             obitos,
             "Óbitos",
             prefix=f"{unidade}_obitos",
-            unidade=unidade
+            unidade=unidade,
+            height=360
         )
     section_end()
 
@@ -3089,12 +3090,12 @@ def render_hmji(df):
         )
 
     col1, col2 = st.columns(2)
+
     with col1:
-        st.markdown("**Pacientes clínicos atendidos / média diária**")
         fig = go.Figure()
 
         main = clin[clin["serie_norm"].isin([
-            "PACIENTES CLINICOS ATENDIDOS"
+             "PACIENTES CLINICOS ATENDIDOS"
         ])]
 
         avg = clin[clin["serie_norm"].isin([
@@ -3140,7 +3141,7 @@ def render_hmji(df):
         plot(fig, f"{unidade}_pacientes")
 
     with col2:
-       grouped_bar(
+        grouped_bar(
             obitos,
             "Óbitos",
             prefix=f"{unidade}_obitos",
