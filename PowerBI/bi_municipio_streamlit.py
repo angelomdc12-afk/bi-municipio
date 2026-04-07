@@ -746,11 +746,11 @@ def normalize_value(v):
 
     # Excel pode entregar duração como timedelta
     if isinstance(v, dt.timedelta):
-        return round(v.total_seconds() / 3600, 2)  # horas
+        return v.total_seconds() / 3600  # horas, sem arredondar
 
     # Excel pode entregar horário como dt.time
     if isinstance(v, dt.time):
-        return round(v.hour + (v.minute / 60) + (v.second / 3600), 2)  # horas
+        return v.hour + (v.minute / 60) + (v.second / 3600)  # horas, sem arredondar
 
     if isinstance(v, str):
         if v.startswith("#DIV/0"):
@@ -758,7 +758,7 @@ def normalize_value(v):
 
         vv = v.strip()
 
-        # tenta interpretar textos tipo 01:30 ou 01:30:00 como horas
+        # interpreta textos tipo 01:30 ou 01:30:00 como horas
         if ":" in vv:
             try:
                 partes = vv.split(":")
@@ -771,7 +771,7 @@ def normalize_value(v):
                     h = m = s = None
 
                 if h is not None:
-                    return round(float(h) + float(m) / 60 + float(s) / 3600, 2)
+                    return float(h) + float(m) / 60 + float(s) / 3600
             except Exception:
                 pass
 
@@ -1286,6 +1286,163 @@ def format_compact_number(x):
         return str(int(x))
     return f"{x:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
+def format_hours_hms(value):
+    if value is None or pd.isna(value):
+        return "-"
+
+    total_seconds = int(round(float(value) * 3600))
+
+    sign = "-" if total_seconds < 0 else ""
+    total_seconds = abs(total_seconds)
+
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+
+    return f"{sign}{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def time_tick_values(max_value):
+    if max_value is None or pd.isna(max_value) or max_value <= 0:
+        return [0, 0.25, 0.5, 0.75, 1.0]
+
+    if max_value <= 1:
+        step = 10 / 60  # 10 min
+    elif max_value <= 3:
+        step = 20 / 60  # 20 min
+    elif max_value <= 6:
+        step = 30 / 60  # 30 min
+    elif max_value <= 12:
+        step = 1.0      # 1h
+    elif max_value <= 24:
+        step = 2.0      # 2h
+    else:
+        step = 6.0      # 6h
+
+    ticks = []
+    current = 0.0
+    limit = float(max_value) * 1.08
+
+    while current <= limit + 1e-9:
+        ticks.append(round(current, 6))
+        current += step
+
+    if not ticks:
+        ticks = [0.0, round(float(max_value), 6)]
+
+    return ticks
+
+
+def line_time_chart(
+    df,
+    title,
+    main_series=None,
+    prefix="time_line",
+    unidade=None
+):
+    work = df.dropna(subset=["valor_num"]).copy()
+    if work.empty:
+        st.info("Sem dados para este gráfico.")
+        return
+
+    fig = go.Figure()
+
+    if main_series:
+        main_norm = normalize_text(main_series)
+        main = work[work["serie_norm"] == main_norm]
+
+        if not main.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=main["mes_label"],
+                    y=main["valor_num"],
+                    mode="lines+markers",
+                    name=str(main_series),
+                    line=dict(color=SEMANTIC_COLORS["realizado"], width=3.5),
+                    marker=dict(size=7, color=SEMANTIC_COLORS["realizado"]),
+                    customdata=main["valor_num"].apply(format_hours_hms),
+                    hovertemplate="<b>%{fullData.name}</b><br>Mês: %{x}<br>Tempo: %{customdata}<extra></extra>"
+                )
+            )
+
+        others = work[
+            (~work["serie_norm"].eq(main_norm)) &
+            (~work["serie_norm"].eq("META"))
+        ].copy()
+
+        for serie in others["serie"].dropna().unique().tolist():
+            temp = others[others["serie"] == serie].copy()
+            serie_color = semantic_color(serie, default=SEMANTIC_COLORS["neutral"])
+
+            fig.add_trace(
+                go.Scatter(
+                    x=temp["mes_label"],
+                    y=temp["valor_num"],
+                    mode="lines+markers",
+                    name=str(serie),
+                    line=dict(color=serie_color, width=2.4),
+                    marker=dict(size=6, color=serie_color),
+                    customdata=temp["valor_num"].apply(format_hours_hms),
+                    hovertemplate="<b>%{fullData.name}</b><br>Mês: %{x}<br>Tempo: %{customdata}<extra></extra>"
+                )
+            )
+    else:
+        series = work["serie"].dropna().unique().tolist()
+        color_map = build_semantic_color_map(series)
+
+        for serie in series:
+            temp = work[work["serie"] == serie].copy()
+            serie_color = semantic_color(serie, default=color_map.get(serie, SEMANTIC_COLORS["neutral"]))
+
+            fig.add_trace(
+                go.Scatter(
+                    x=temp["mes_label"],
+                    y=temp["valor_num"],
+                    mode="lines+markers",
+                    name=str(serie),
+                    line=dict(color=serie_color, width=3 if "MÉDIA GERAL" in str(serie).upper() or "MEDIA GERAL" in str(serie).upper() else 2.4),
+                    marker=dict(size=6, color=serie_color),
+                    customdata=temp["valor_num"].apply(format_hours_hms),
+                    hovertemplate="<b>%{fullData.name}</b><br>Mês: %{x}<br>Tempo: %{customdata}<extra></extra>"
+                )
+            )
+
+    meta = work[work["serie_norm"] == "META"].copy()
+    if not meta.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=meta["mes_label"],
+                y=meta["valor_num"],
+                mode="lines+markers",
+                name="Meta",
+                line=dict(color=SEMANTIC_COLORS["meta"], width=2, dash="dash"),
+                marker=dict(size=5, color=SEMANTIC_COLORS["meta"]),
+                customdata=meta["valor_num"].apply(format_hours_hms),
+                hovertemplate="<b>Meta</b><br>Mês: %{x}<br>Tempo: %{customdata}<extra></extra>"
+            )
+        )
+
+    fig = apply_plotly_theme(
+        fig,
+        title=title,
+        subtitle=chart_subtitle(work, unidade),
+        yaxis_title="Tempo (HH:MM:SS)",
+        height=360,
+        legend=True,
+        legend_orientation="h"
+    )
+
+    max_y = work["valor_num"].max()
+    ticks = time_tick_values(max_y)
+
+    fig.update_yaxes(
+        tickmode="array",
+        tickvals=ticks,
+        ticktext=[format_hours_hms(v) for v in ticks]
+    )
+
+    fig = apply_month_axis_order(fig, work)
+    plot(fig, prefix)
 
 def percent_atingido(executado, meta):
     if executado is None or meta is None or pd.isna(executado) or pd.isna(meta) or meta == 0:
@@ -2060,7 +2217,8 @@ def line_with_optional_meta(
                     name=str(main_series).title(),
                     line=dict(color=main_color, width=3.5),
                     marker=dict(size=7, color=main_color),
-                    hovertemplate="<b>%{fullData.name}</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
+                    customdata=main["valor_num"].apply(format_hours_hms),
+                    hovertemplate="<b>%{fullData.name}</b><br>Mês: %{x}<br>Tempo: %{customdata}<extra></extra>"
                 )
             )
 
@@ -2100,9 +2258,9 @@ def line_with_optional_meta(
                     mode="lines+markers",
                     name=str(serie),
                     line=dict(color=serie_color, width=2.4),
-                    marker=dict(size=5.5, color=serie_color),
-                    opacity=0.9 if semantic_color(serie, default=None) else 0.72,
-                    hovertemplate="<b>%{fullData.name}</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
+                    marker=dict(size=6, color=serie_color),
+                    customdata=temp["valor_num"].apply(format_hours_hms),
+                    hovertemplate="<b>%{fullData.name}</b><br>Mês: %{x}<br>Tempo: %{customdata}<extra></extra>"
                 )
             )
 
@@ -2117,7 +2275,8 @@ def line_with_optional_meta(
                 name="Meta",
                 line=dict(color=meta_color, width=2, dash="dash"),
                 marker=dict(size=5, color=meta_color),
-                hovertemplate="<b>Meta</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
+                customdata=meta["valor_num"].apply(format_hours_hms),
+                hovertemplate="<b>Meta</b><br>Mês: %{x}<br>Tempo: %{customdata}<extra></extra>"
             )
         )
 
@@ -2439,69 +2598,35 @@ def render_upa_page(df, unidade):
         unidade=unidade
     )
 
-    line_with_optional_meta(
+    line_time_chart(
         espera,
         "Tempo de espera para classificação de risco vs meta",
         main_series="MÉDIA GERAL",
-        unit_suffix="Horas",
         prefix=f"{unidade}_espera_class",
         unidade=unidade
     )
 
-    st.markdown("**Tempo médio de espera de atendimento médico por classificação de risco**")
-    med = tempo_med.dropna(subset=["valor_num"]).copy()
-    fig = go.Figure()
-
-    series_med = med["serie"].dropna().unique().tolist()
-    med_color_map = build_semantic_color_map(series_med)
-
-    for serie in series_med:
-        temp = med[med["serie"] == serie]
-        serie_color = semantic_color(serie, default=med_color_map.get(serie, SEMANTIC_COLORS["neutral"]))
-
-        fig.add_trace(
-            go.Scatter(
-                x=temp["mes_label"],
-                y=temp["valor_num"],
-                mode="lines+markers",
-                name=serie,
-                line=dict(color=serie_color, width=3 if "MÉDIA GERAL" in str(serie).upper() or "MEDIA GERAL" in str(serie).upper() else 2.4),
-                marker=dict(size=6, color=serie_color),
-                opacity=1 if "MÉDIA GERAL" in str(serie).upper() or "MEDIA GERAL" in str(serie).upper() else 0.88,
-                hovertemplate="<b>%{fullData.name}</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
-            )
-        ) 
-    fig = clean_trace_names(fig)
-    fig = apply_plotly_theme(
-        fig,
-        title="Tempo médio de espera de atendimento médico por classificação de risco",
-        subtitle=chart_subtitle(med, unidade),
-        yaxis_title="Horas",
-        height=360,
-        legend=True,
-        legend_orientation="h"
+    line_time_chart(
+        tempo_med,
+        "Tempo médio de espera de atendimento médico por classificação de risco",
+        prefix=f"{unidade}_tempo_med_risco",
+        unidade=unidade
     )
-
-    fig = apply_month_axis_order(fig, med)
-
-    plot(fig, f"{unidade}_tempo_med_risco")
     section_end()
 
     section_start("Permanência, apoio e desfechos", "Indicadores operacionais complementares e perfil da demanda")
     col1, col2 = st.columns(2)
     with col1:
-        grouped_bar(
+        line_time_chart(
             intern,
             "Tempo de permanência de pacientes internados",
-            unit_suffix="Horas",
             prefix=f"{unidade}_intern",
             unidade=unidade
         )
     with col2:
-        grouped_bar(
+        line_time_chart(
             semint,
             "Tempo de permanência de pacientes sem internação",
-            unit_suffix="Horas",
             prefix=f"{unidade}_semintern",
             unidade=unidade
         )
