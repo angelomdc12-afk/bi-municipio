@@ -2,6 +2,7 @@ import datetime as dt
 from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
+import base64
 
 import openpyxl
 import pandas as pd
@@ -311,62 +312,85 @@ st.set_page_config(page_title="Painel de Gestão Patris", page_icon="📊", layo
 
 check_login()
 
-st.markdown("""
+st.set_page_config(page_title="Painel de Gestão Patris", page_icon="📊", layout="wide")
+
+check_login()
+
+BASE_DIR = Path(__file__).resolve().parent
+ASSETS_DIR = BASE_DIR / "assets"
+
+LOGO_PATRIS = ASSETS_DIR / "patris.png"
+LOGO_PREFEITURA = ASSETS_DIR / "prefeitura.png"
+BACKGROUND_IMG = ASSETS_DIR / "background.png"
+
+def image_to_base64(path):
+    if not path.exists():
+        return ""
+    return base64.b64encode(path.read_bytes()).decode("utf-8")
+
+BACKGROUND_BASE64 = image_to_base64(BACKGROUND_IMG)
+
+st.markdown(f"""
 <style>
 
-[data-testid="stAppViewContainer"] {
-    background: #F8FAFC;
-}
+[data-testid="stAppViewContainer"] {{
+    background-image:
+        linear-gradient(rgba(239, 248, 255, 0.72), rgba(239, 248, 255, 0.82)),
+        url("data:image/png;base64,{BACKGROUND_BASE64}");
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    background-color: #EEF7FC;
+}}
 
-[data-testid="stMain"] {
+[data-testid="stMain"] {{
     background: transparent;
-}
-            
+}}
+
 /* ===== APP ===== */
-.block-container {
+.block-container {{
     padding-top: 1.1rem;
     padding-bottom: 2rem;
     padding-left: 1.6rem;
     padding-right: 1.6rem;
     max-width: 100%;
-}
+}}
 
 /* ===== SIDEBAR ===== */
-section[data-testid="stSidebar"] {
+section[data-testid="stSidebar"] {{
     background: linear-gradient(180deg, #0F4C81 0%, #0B2E4E 100%);
     border-right: 1px solid rgba(255,255,255,0.06);
-}
+}}
 
-section[data-testid="stSidebar"] > div {
+section[data-testid="stSidebar"] > div {{
     padding-top: 0.8rem;
-}
+}}
 
-section[data-testid="stSidebar"] * {
+section[data-testid="stSidebar"] * {{
     color: #F8FAFC !important;
-}
+}}
 
 /* MENU */
-section[data-testid="stSidebar"] div[role="radiogroup"] label {
+section[data-testid="stSidebar"] div[role="radiogroup"] label {{
     background: rgba(255,255,255,0.05);
     border-radius: 14px;
     padding: 10px;
     margin-bottom: 8px;
-}
+}}
 
-section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
+section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {{
     background: rgba(255,255,255,0.10);
-}
+}}
 
 /* FILTROS */
-section[data-testid="stSidebar"] div[data-baseweb="select"] > div {
+section[data-testid="stSidebar"] div[data-baseweb="select"] > div {{
     background: rgba(255,255,255,0.06);
     border-radius: 12px;
-}
+}}
 
 </style>
 """, unsafe_allow_html=True)
-
-from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -702,12 +726,6 @@ def plot(fig, prefix="grafico"):
     _plot_counter += 1
     st.plotly_chart(fig, use_container_width=True, key=f"{prefix}_{_plot_counter}")
 
-BASE_DIR = Path(__file__).resolve().parent
-ASSETS_DIR = BASE_DIR / "assets"
-
-LOGO_PATRIS = ASSETS_DIR / "patris.png"
-LOGO_PREFEITURA = ASSETS_DIR / "prefeitura.png"
-
 def local_excel_path():
     base = Path(__file__).parent
     names = [
@@ -725,20 +743,47 @@ def local_excel_path():
 def normalize_value(v):
     if v in (None, ""):
         return None
+
+    # Excel pode entregar duração como timedelta
     if isinstance(v, dt.timedelta):
-        return round(v.total_seconds() / 60, 2)
+        return round(v.total_seconds() / 3600, 2)  # horas
+
+    # Excel pode entregar horário como dt.time
     if isinstance(v, dt.time):
-        return round(v.hour * 60 + v.minute + v.second / 60, 2)
+        return round(v.hour + (v.minute / 60) + (v.second / 3600), 2)  # horas
+
     if isinstance(v, str):
         if v.startswith("#DIV/0"):
             return None
-        vv = v.strip().replace(",", ".")
+
+        vv = v.strip()
+
+        # tenta interpretar textos tipo 01:30 ou 01:30:00 como horas
+        if ":" in vv:
+            try:
+                partes = vv.split(":")
+                if len(partes) == 2:
+                    h, m = partes
+                    s = 0
+                elif len(partes) == 3:
+                    h, m, s = partes
+                else:
+                    h = m = s = None
+
+                if h is not None:
+                    return round(float(h) + float(m) / 60 + float(s) / 3600, 2)
+            except Exception:
+                pass
+
+        vv = vv.replace(",", ".")
         try:
             return float(vv)
         except Exception:
             return v.strip()
+
     if isinstance(v, (int, float)):
         return float(v)
+
     return v
 
 
@@ -881,11 +926,19 @@ def load_workbook_data(file_bytes=None):
     data = pd.concat(frames, ignore_index=True)
     return data, source_name
 
-@st.cache_data(show_spinner=False)
-@st.cache_data(show_spinner=False)
+
 @st.cache_data(show_spinner=False)
 def load_metas_data(file_bytes=None):
-    colunas_padrao = ["categoria", "categoria_norm", "mes", "mes_label", "meta", "meta_total"]
+    colunas_padrao = [
+        "categoria",
+        "categoria_norm",
+        "mes",
+        "mes_label",
+        "executado",
+        "meta",
+        "executado_total",
+        "meta_total",
+    ]
 
     if file_bytes is None:
         path = local_excel_path()
@@ -906,7 +959,7 @@ def load_metas_data(file_bytes=None):
     categoria_atual = None
 
     for r in range(1, ws.max_row + 1):
-        vals = [ws.cell(r, c).value for c in range(1, 15)]
+        vals = [ws.cell(r, c).value for c in range(1, 16)]
 
         linha_meses = [normalize_text(v) for v in vals[2:14] if v is not None]
         if len(linha_meses) >= 3 and all(m in MESES for m in linha_meses):
@@ -919,47 +972,90 @@ def load_metas_data(file_bytes=None):
         if not col_b_norm:
             continue
 
-        if col_b_norm not in ["META", "TOTAL GERAL"]:
-            categoria_atual = str(col_b).strip()
+        if col_b_norm == "TOTAL GERAL":
             continue
 
-        if col_b_norm == "META" and categoria_atual and meses:
-            meta_total = 0.0
+        # linha da categoria = executado
+        if col_b_norm != "META":
+            categoria_atual = str(col_b).strip()
 
-            for i, c in enumerate(range(3, 15)):
-                mes = meses[i] if i < len(meses) else None
+            for i, c in enumerate(range(3, 15)):  # C:N
+                mes = meses[i] if meses and i < len(meses) else None
                 valor = normalize_value(ws.cell(r, c).value)
                 valor_num = pd.to_numeric(pd.Series([valor]), errors="coerce").iloc[0]
-
-                if pd.notna(valor_num):
-                    meta_total += float(valor_num)
 
                 rows.append({
                     "categoria": categoria_atual,
                     "categoria_norm": normalize_text(categoria_atual),
                     "mes": mes,
                     "mes_label": MESES_LABEL.get(mes, mes),
-                    "meta": valor_num if pd.notna(valor_num) else None,
-                    "meta_total": None
+                    "executado": float(valor_num) if pd.notna(valor_num) else 0.0,
+                    "meta": None,
+                    "executado_total": None,
+                    "meta_total": None,
+                })
+            continue
+
+        # linha META = meta
+        if col_b_norm == "META" and categoria_atual and meses:
+            for i, c in enumerate(range(3, 15)):  # C:N
+                mes = meses[i] if i < len(meses) else None
+                valor = normalize_value(ws.cell(r, c).value)
+                valor_num = pd.to_numeric(pd.Series([valor]), errors="coerce").iloc[0]
+
+                rows.append({
+                    "categoria": categoria_atual,
+                    "categoria_norm": normalize_text(categoria_atual),
+                    "mes": mes,
+                    "mes_label": MESES_LABEL.get(mes, mes),
+                    "executado": None,
+                    "meta": float(valor_num) if pd.notna(valor_num) else 0.0,
+                    "executado_total": None,
+                    "meta_total": None,
                 })
 
     df = pd.DataFrame(rows, columns=colunas_padrao)
 
-    if not df.empty:
-        df["mes"] = pd.Categorical(df["mes"], categories=MESES, ordered=True)
-        df = df.sort_values(["categoria_norm", "mes"])
+    if df.empty:
+        return pd.DataFrame(columns=colunas_padrao)
 
-        totais = (
-            df.groupby("categoria_norm", as_index=False)["meta"]
-            .sum()
-            .rename(columns={"meta": "meta_total_calc"})
+    df["executado"] = pd.to_numeric(df["executado"], errors="coerce")
+    df["meta"] = pd.to_numeric(df["meta"], errors="coerce")
+
+    # evita bug do groupby com categorical
+    df["mes"] = df["mes"].astype(str)
+    df.loc[df["mes"].isin(["None", "nan"]), "mes"] = None
+
+    resumo = (
+        df.pivot_table(
+            index=["categoria", "categoria_norm", "mes", "mes_label"],
+            values=["executado", "meta"],
+            aggfunc="max",
+            dropna=False,
         )
+        .reset_index()
+    )
 
-        df = df.merge(totais, on="categoria_norm", how="left")
-        df["meta_total"] = df["meta_total_calc"]
-        df = df.drop(columns=["meta_total_calc"])
+    resumo["mes_ord"] = resumo["mes"].apply(lambda x: MESES.index(x) if x in MESES else 999)
+    resumo = resumo.sort_values(["categoria_norm", "mes_ord"]).drop(columns=["mes_ord"])
 
-    return df
+    totais = (
+        resumo.groupby(["categoria", "categoria_norm"], dropna=False)[["executado", "meta"]]
+        .sum(min_count=1)
+        .reset_index()
+        .rename(columns={
+            "executado": "executado_total",
+            "meta": "meta_total",
+        })
+    )
+
+    resumo = resumo.merge(
+        totais,
+        on=["categoria", "categoria_norm"],
+        how="left"
+    )
+
+    return resumo[colunas_padrao].reset_index(drop=True)
 
 def filter_panel(df, unidade, painel):
     unidade_norm = normalize_text(unidade)
@@ -1233,46 +1329,95 @@ def compute_executado_for_categoria(data, categoria, mes=None):
         return float(subset["valor_num"].sum()) if not subset.empty else 0.0
 
     painel_upper = work["painel"].astype(str).str.upper()
-    serie_upper = work["serie_norm"].astype(str).str.upper()
+    painel_norm_upper = work["painel_norm"].astype(str).str.upper() if "painel_norm" in work.columns else painel_upper
+    serie_upper = work["serie"].astype(str).str.upper() if "serie" in work.columns else work["serie_norm"].astype(str).str.upper()
+    serie_norm_upper = work["serie_norm"].astype(str).str.upper()
     unidade_upper = work["unidade"].astype(str).str.upper()
+    unidade_norm_upper = work["unidade_norm"].astype(str).str.upper() if "unidade_norm" in work.columns else unidade_upper
 
-    # ===== AJUSTE PEDIDO =====
-    # Estes dois cards individuais devem ficar sem executado,
-    # pois na sua regra atual isso não consta como executado válido na planilha.
-    if categoria_norm in ["MÉDICOS", "ATENÇÃO ESPECIALIZADA", "ATENCAO ESPECIALIZADA"]:
-        return 0.0
+    # ATENÇÃO PRIMÁRIA
+    if categoria_norm in ["ATENÇÃO PRIMÁRIA", "ATENCAO PRIMARIA"]:
+        return sum_mask(
+            unidade_upper.eq("ATENÇÃO PRIMÁRIA") |
+            unidade_upper.eq("ATENCAO PRIMARIA") |
+            unidade_norm_upper.eq("ATENÇÃO PRIMÁRIA") |
+            unidade_norm_upper.eq("ATENCAO PRIMARIA")
+        )
 
+    # ATENÇÃO ESPECIALIZADA
+    if categoria_norm in ["ATENÇÃO ESPECIALIZADA", "ATENCAO ESPECIALIZADA"]:
+        return sum_mask(
+            unidade_upper.eq("ATENÇÃO ESPECIALIZADA") |
+            unidade_upper.eq("ATENCAO ESPECIALIZADA") |
+            unidade_norm_upper.eq("ATENÇÃO ESPECIALIZADA") |
+            unidade_norm_upper.eq("ATENCAO ESPECIALIZADA") |
+            painel_upper.str.contains("ESPECIALIZ", na=False) |
+            painel_norm_upper.str.contains("ESPECIALIZ", na=False)
+        )
+
+    # AÇÕES COLETIVA
     if categoria_norm == "AÇÕES COLETIVA":
         return sum_mask(
             painel_upper.str.contains("AÇÃO COLET", na=False) |
             painel_upper.str.contains("ACAO COLET", na=False) |
+            painel_norm_upper.str.contains("AÇÃO COLET", na=False) |
+            painel_norm_upper.str.contains("ACAO COLET", na=False) |
             serie_upper.str.contains("AÇÃO COLET", na=False) |
-            serie_upper.str.contains("ACAO COLET", na=False)
+            serie_upper.str.contains("ACAO COLET", na=False) |
+            serie_norm_upper.str.contains("AÇÃO COLET", na=False) |
+            serie_norm_upper.str.contains("ACAO COLET", na=False)
         )
 
-    if categoria_norm == "ATENÇÃO PRIMÁRIA" or categoria_norm == "ATENCAO PRIMARIA":
-        return sum_mask(unidade_upper.eq("ATENÇÃO PRIMÁRIA") | unidade_upper.eq("ATENCAO PRIMARIA"))
-
+    # ODONTOLOGIA
     if categoria_norm == "ODONTOLOGIA":
         return sum_mask(
             painel_upper.str.contains("ODONTO", na=False) |
-            serie_upper.str.contains("ODONTO", na=False)
+            painel_norm_upper.str.contains("ODONTO", na=False) |
+            serie_upper.str.contains("ODONTO", na=False) |
+            serie_norm_upper.str.contains("ODONTO", na=False)
         )
 
+    # ENFERMAGEM
     if categoria_norm == "ENFERMAGEM":
         return sum_mask(
             painel_upper.str.contains("ENFERM", na=False) |
-            serie_upper.str.contains("ENFERM", na=False)
+            painel_norm_upper.str.contains("ENFERM", na=False) |
+            serie_upper.str.contains("ENFERM", na=False) |
+            serie_norm_upper.str.contains("ENFERM", na=False)
         )
 
+    # MÉDICOS
+    if categoria_norm == "MÉDICOS":
+        return sum_mask(
+            painel_upper.str.contains("MÉDIC", na=False) |
+            painel_upper.str.contains("MEDIC", na=False) |
+            painel_norm_upper.str.contains("MÉDIC", na=False) |
+            painel_norm_upper.str.contains("MEDIC", na=False) |
+            serie_upper.str.contains("MÉDIC", na=False) |
+            serie_upper.str.contains("MEDIC", na=False) |
+            serie_norm_upper.str.contains("MÉDIC", na=False) |
+            serie_norm_upper.str.contains("MEDIC", na=False) |
+            serie_upper.str.contains("CONSULTAS MÉDICAS", na=False) |
+            serie_upper.str.contains("CONSULTAS MEDICAS", na=False) |
+            serie_norm_upper.str.contains("CONSULTAS MÉDICAS", na=False) |
+            serie_norm_upper.str.contains("CONSULTAS MEDICAS", na=False)
+        )
+
+    # EQUIPE MULTIDISCIPLINAR (EXCETO MÉDICOS)
     if categoria_norm == "EQUIPE MULTIDISCIPLINAR (EXCETO MÉDICOS)":
         return sum_mask(
             painel_upper.eq("NÍVEL SUPERIOR (EXCETO MÉDICO)") |
             painel_upper.eq("NIVEL SUPERIOR (EXCETO MEDICO)") |
+            painel_norm_upper.eq("NÍVEL SUPERIOR (EXCETO MÉDICO)") |
+            painel_norm_upper.eq("NIVEL SUPERIOR (EXCETO MEDICO)") |
             serie_upper.str.contains("NUTRI", na=False) |
             serie_upper.str.contains("PSICOLOG", na=False) |
             serie_upper.str.contains("ASSISTENTE SOCIAL", na=False) |
-            serie_upper.str.contains("FISIOTERAP", na=False)
+            serie_upper.str.contains("FISIOTERAP", na=False) |
+            serie_norm_upper.str.contains("NUTRI", na=False) |
+            serie_norm_upper.str.contains("PSICOLOG", na=False) |
+            serie_norm_upper.str.contains("ASSISTENTE SOCIAL", na=False) |
+            serie_norm_upper.str.contains("FISIOTERAP", na=False)
         )
 
     return 0.0
@@ -1282,35 +1427,23 @@ def build_metas_panel(data, metas_df):
     if metas_df is None or metas_df.empty:
         return pd.DataFrame()
 
-    rows = []
-    for item in metas_df.itertuples(index=False):
-        executado = compute_executado_for_categoria(data, item.categoria, item.mes)
-        atingido = percent_atingido(executado, item.meta)
-        saldo = None
-        saldo_pct = None
+    painel = metas_df.copy()
+    painel["executado"] = pd.to_numeric(painel["executado"], errors="coerce").fillna(0.0)
+    painel["meta"] = pd.to_numeric(painel["meta"], errors="coerce").fillna(0.0)
 
-        if item.meta is not None and not pd.isna(item.meta):
-            saldo = executado - item.meta
-            if item.meta != 0:
-                saldo_pct = (saldo / item.meta) * 100
+    painel["atingido_pct"] = painel.apply(
+        lambda x: percent_atingido(x["executado"], x["meta"]),
+        axis=1
+    )
+    painel["saldo"] = painel["executado"] - painel["meta"]
+    painel["saldo_pct"] = painel.apply(
+        lambda x: ((x["saldo"] / x["meta"]) * 100)
+        if pd.notna(x["meta"]) and x["meta"] not in [0, None]
+        else None,
+        axis=1
+    )
 
-        rows.append({
-            "categoria": item.categoria,
-            "mes": item.mes,
-            "mes_label": item.mes_label,
-            "meta": item.meta,
-            "executado": executado,
-            "atingido_pct": atingido,
-            "saldo": saldo,
-            "saldo_pct": saldo_pct,
-            "meta_total": item.meta_total,
-        })
-
-    df = pd.DataFrame(rows)
-    if not df.empty:
-        df["mes"] = pd.Categorical(df["mes"], categories=MESES, ordered=True)
-        df = df.sort_values(["categoria", "mes"])
-    return df
+    return painel
 
 
 def meta_status_badge(executado, meta):
@@ -2160,17 +2293,28 @@ def render_upa_page(df, unidade):
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
+        total_recep = recep[
+           recep["serie_norm"].isin([
+               "PACIENTES RECEPCIONADOS"
+            ])
+        ]["valor_num"].sum()
+
         card(
             "Pacientes recepcionados",
-            format_int(recep["valor_num"].sum()),
+            format_int(total_recep),
             icon="👥",
             subtitle="Volume total no período"
         )
 
     with c2:
+        total_atend_med = metric_sum(
+            atend_med,
+            exclude_series_norm=["META", "MÉDIA DIÁRIA", "MEDIA DIÁRIA", "MEDIA DIARIA", "TOTAL"]
+        )
+
         card(
             "Atendimentos médicos",
-            format_int(atend_med[atend_med["serie_norm"] == "ATENDIMENTOS MÉDICOS"]["valor_num"].sum()),
+            format_int(total_atend_med or 0),
             icon="🩺",
             subtitle="Produção médica consolidada"
         )
@@ -2252,19 +2396,20 @@ def render_upa_page(df, unidade):
     section_end()
 
     section_start("Risco e tempo assistencial", "Leitura da pressão assistencial, classificação e desempenho de atendimento")
-    stacked_bar(
-        risco[~risco["serie_norm"].eq("TOTAL DE ATENDIMENTOS")],
+    grouped_bar(
+        risco[~risco["serie_norm"].str.contains("TOTAL", na=False)],
         "Atendimentos por classificação de risco",
         color_map=RISK_COLORS,
+        unit_suffix="Quantidade",
         prefix=f"{unidade}_risco_qtd",
-        unidade=unidade
+         unidade=unidade
     )
 
-    stacked_bar(
-        perc_risco[~perc_risco["serie_norm"].eq("TOTAL DE ATENDIMENTOS")],
+    grouped_bar(
+        perc_risco[~perc_risco["serie_norm"].str.contains("TOTAL", na=False)],
         "Percentual de atendimentos por classificação de risco",
         color_map=RISK_COLORS,
-        as_percent=True,
+        unit_suffix="Percentual (%)",
         prefix=f"{unidade}_risco_perc",
         unidade=unidade
     )
@@ -2273,7 +2418,7 @@ def render_upa_page(df, unidade):
         espera,
         "Tempo de espera para classificação de risco vs meta",
         main_series="MÉDIA GERAL",
-        unit_suffix="Minutos",
+        unit_suffix="Horas",
         prefix=f"{unidade}_espera_class",
         unidade=unidade
     )
@@ -2306,7 +2451,7 @@ def render_upa_page(df, unidade):
         fig,
         title="Tempo médio de espera de atendimento médico por classificação de risco",
         subtitle=chart_subtitle(med, unidade),
-        yaxis_title="Minutos",
+        yaxis_title="Horas",
         height=360,
         legend=True,
         legend_orientation="h"
@@ -2323,7 +2468,7 @@ def render_upa_page(df, unidade):
         grouped_bar(
             intern,
             "Tempo de permanência de pacientes internados",
-            unit_suffix="Minutos",
+            unit_suffix="Horas",
             prefix=f"{unidade}_intern",
             unidade=unidade
         )
@@ -2331,7 +2476,7 @@ def render_upa_page(df, unidade):
         grouped_bar(
             semint,
             "Tempo de permanência de pacientes sem internação",
-            unit_suffix="Minutos",
+            unit_suffix="Horas",
             prefix=f"{unidade}_semintern",
             unidade=unidade
         )
@@ -2388,7 +2533,13 @@ def render_hmji(df):
     st.subheader(unidade)
 
     unit_df = df[df["unidade"] == unidade].copy()
-    clin = filter_panel(df, unidade, "PACIENTES CLÍNICOS ATENDIDOS")
+    clin = df[
+        (df["unidade"] == unidade) &
+        (
+            df["painel_norm"].str.contains("PACIENTES CLINICOS", na=False) |
+            df["serie_norm"].str.contains("PACIENTES CLINICOS", na=False)
+        )
+    ].copy()
 
     meses_base = [m for m in unit_df["mes"].dropna().tolist() if pd.notna(m)]
     meses_base = list(dict.fromkeys(meses_base))
@@ -2447,7 +2598,8 @@ def render_hmji(df):
         merged["serie_norm"] = merged["serie_canonica"]
         return merged.sort_values(["mes", "serie"])
 
-    obitos = hmji_block({"TOTAL": ["TOTAL"]}, include_total=True)
+    obitos = filter_panel(df, unidade, "ÓBITOS")
+    obitos = obitos[obitos["serie_norm"].isin(["TOTAL", "ÓBITOS", "OBITOS"])].copy()
     esp = hmji_block({
         "CIRURGIA GERAL": ["CIRURGIA GERAL"],
         "UROLOGIA": ["UROLOGIA"],
@@ -2476,17 +2628,28 @@ def render_hmji(df):
     c1, c2, c3 = st.columns(3)
 
     with c1:
+        total_clin = clin[
+            ~clin["serie_norm"].isin([
+                "MÉDIA DIÁRIA",
+                "MEDIA DIÁRIA",
+                "MEDIA DIARIA",
+                "TOTAL"
+            ])
+        ]["valor_num"].sum()
+
         card(
             "Pacientes clínicos",
-            format_int(clin[clin["serie_norm"] == "PACIENTES CLÍNICOS ATENDIDOS"]["valor_num"].sum()),
+            format_int(total_clin),
             icon="🏥",
             subtitle="Atendimentos no período"
         )
 
     with c2:
+        total_obitos = obitos["valor_num"].sum()
+
         card(
             "Óbitos",
-            format_int(obitos["valor_num"].sum()),
+            format_int(total_obitos),
             icon="⚠️",
             subtitle="Apenas o total de óbitos"
         )
@@ -2540,7 +2703,12 @@ def render_hmji(df):
         plot(fig, f"{unidade}_pacientes")
 
     with col2:
-        grouped_bar(obitos, "Óbitos", prefix=f"{unidade}_obitos", unidade=unidade)
+       grouped_bar(
+            obitos,
+            "Óbitos",
+            prefix=f"{unidade}_obitos",
+            unidade=unidade
+        )
 
     grouped_bar(esp, "Consultas especializadas", prefix=f"{unidade}_esp", unidade=unidade)
     grouped_bar(exames, "Exames internos", prefix=f"{unidade}_exames", unidade=unidade)
