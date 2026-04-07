@@ -16,8 +16,25 @@ USUARIOS_APP = {
     "wendel": "inovar2026",
     "guilherme": "patris2026",
     "denis": "inovar2026",
+    "prefeitura": "pre2026",    
 }
 TEMPO_SESSAO_HORAS = 8
+
+PERMISSOES = {
+    "admin": ["*"],
+    "vittor": ["*"],
+    "wendel": ["*"],
+    "guilherme": ["*"],
+    "denis": ["*"],
+    "prefeitura": ["UPA Luziânia",
+    "UPA Jardim Ingá",
+    "HMJI",
+    "Atenção Secundária",
+    "Saúde Mental",
+    "Atenção Primária",
+    "Gestão de Pessoas",
+    "Metas do Plano"],
+}
 
 def render_login():
     st.markdown("""
@@ -322,6 +339,10 @@ ASSETS_DIR = BASE_DIR / "assets"
 LOGO_PATRIS = ASSETS_DIR / "patris.png"
 LOGO_PREFEITURA = ASSETS_DIR / "prefeitura.png"
 BACKGROUND_IMG = ASSETS_DIR / "background.png"
+
+def usuario_pode_ver_pagina(usuario, pagina):
+    permissoes = PERMISSOES.get(usuario, [])
+    return "*" in permissoes or pagina in permissoes
 
 def image_to_base64(path):
     if not path.exists():
@@ -3472,19 +3493,33 @@ if data.empty:
 
 st.sidebar.success(f"Fonte: {source_name}")
 st.sidebar.markdown("## Navegação")
+
+usuario_logado = st.session_state.get("usuario_logado")
+
+todas_paginas = [
+    "UPA Luziânia",
+    "UPA Jardim Ingá",
+    "HMJI",
+    "Atenção Secundária",
+    "Saúde Mental",
+    "Atenção Primária",
+    "Gestão de Pessoas",
+    "Financeiro",
+    "Metas do Plano"
+]
+
+paginas_disponiveis = [
+    p for p in todas_paginas
+    if usuario_pode_ver_pagina(usuario_logado, p)
+]
+
+if not paginas_disponiveis:
+    st.error("Este usuário não possui acesso a nenhuma página.")
+    st.stop()
+
 pagina = st.sidebar.radio(
     "Selecione a página",
-    [
-        "UPA Luziânia",
-        "UPA Jardim Ingá",
-        "HMJI",
-        "Atenção Secundária",
-        "Saúde Mental",
-        "Atenção Primária",
-        "Gestão de Pessoas",
-        "Financeiro",
-        "Metas do Plano"
-    ]
+    paginas_disponiveis
 )
 
 st.sidebar.markdown("## Filtros")
@@ -3501,33 +3536,45 @@ else:
 
 hero_header(pagina, source_name, meses_selecionados)
 
+if not usuario_pode_ver_pagina(usuario_logado, pagina):
+    st.error("🚫 Você não tem acesso a esta página.")
+    st.stop()
+
 if pagina == "UPA Luziânia":
     render_upa_page(data, "UPA DE LUZIÂNIA - UPA II")
+
 elif pagina == "UPA Jardim Ingá":
     render_upa_page(data, "UPA JARDIM INGÁ - UPA I")
+
 elif pagina == "HMJI":
     render_hmji(data)
+
 elif pagina == "Atenção Secundária":
     render_generic(data, "ATENÇÃO SECUNDÁRIA", [
         "CONSULTAS ESPECIALIZADAS (CAIS)",
         "CONSULTAS ESPECIALIZADAS (MATERNO INFANTIL)",
         "CONSULTAS ESPECIALIZADAS (FARMÁCIA CENTRAL)",
     ])
+
 elif pagina == "Saúde Mental":
     render_generic(data, "SAÚDE MENTAL", [
         "CONSULTAS ESPECIALIZADAS (CAPS II)",
         "CONSULTAS ESPECIALIZADAS (CAPS AD III)",
         "CONSULTAS ESPECIALIZADAS (CLÍNICA PSICOLOGIA)",
     ])
+
 elif pagina == "Atenção Primária":
     render_generic(data, "ATENÇÃO PRIMÁRIA", [
         "CONSULTAS MÉDICAS",
         "NÍVEL SUPERIOR (EXCETO MÉDICO)",
     ])
+
 elif pagina == "Gestão de Pessoas":
     render_rh_page(data)
+
 elif pagina == "Financeiro":
     render_financeiro_page(financeiro_data)
+
 else:
     render_metas_page(data, metas_data)
 
