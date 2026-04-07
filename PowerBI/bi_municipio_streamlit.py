@@ -2396,17 +2396,42 @@ def render_upa_page(df, unidade):
     section_end()
 
     section_start("Risco e tempo assistencial", "Leitura da pressão assistencial, classificação e desempenho de atendimento")
+    risco_plot = risco[
+        ~risco["serie_norm"].str.contains("TOTAL", na=False)
+    ].copy()
+
+    # remove meses totalmente zerados
+    if not risco_plot.empty:
+        soma_mes_risco = risco_plot.groupby("mes_label")["valor_num"].sum(min_count=1)
+        meses_validos_risco = soma_mes_risco[soma_mes_risco.fillna(0) > 0].index.tolist()
+        risco_plot = risco_plot[risco_plot["mes_label"].isin(meses_validos_risco)].copy()
+
     grouped_bar(
-        risco[~risco["serie_norm"].str.contains("TOTAL", na=False)],
+        risco_plot,
         "Atendimentos por classificação de risco",
         color_map=RISK_COLORS,
         unit_suffix="Quantidade",
         prefix=f"{unidade}_risco_qtd",
-         unidade=unidade
+        unidade=unidade
     )
 
+    perc_plot = perc_risco[
+        perc_risco["serie_norm"].str.contains("TOTAL", na=False)
+    ].copy()
+
+    # remove erros e meses vazios
+    perc_plot = perc_plot[perc_plot["valor_num"].notna()].copy()
+
+    if not perc_plot.empty:
+        soma_mes_perc = perc_plot.groupby("mes_label")["valor_num"].sum(min_count=1)
+        meses_validos_perc = soma_mes_perc[soma_mes_perc.fillna(0) > 0].index.tolist()
+        perc_plot = perc_plot[perc_plot["mes_label"].isin(meses_validos_perc)].copy()
+
+        # Excel percentual vem como fração (ex.: 0.65) -> converter para 65
+        perc_plot["valor_num"] = perc_plot["valor_num"] * 100
+
     grouped_bar(
-        perc_risco[~perc_risco["serie_norm"].str.contains("TOTAL", na=False)],
+        perc_plot,
         "Percentual de atendimentos por classificação de risco",
         color_map=RISK_COLORS,
         unit_suffix="Percentual (%)",
@@ -2666,8 +2691,17 @@ def render_hmji(df):
     with col1:
         st.markdown("**Pacientes clínicos atendidos / média diária**")
         fig = go.Figure()
-        main = clin[clin["serie_norm"] == "PACIENTES CLÍNICOS ATENDIDOS"]
-        avg = clin[clin["serie_norm"].isin(["MÉDIA DIÁRIA", "MEDIA DIÁRIA", "MEDIA DIARIA"])]
+
+        main = clin[clin["serie_norm"].isin([
+            "PACIENTES CLINICOS ATENDIDOS"
+        ])]
+
+        avg = clin[clin["serie_norm"].isin([
+            "MÉDIA DIÁRIA",
+            "MEDIA DIÁRIA",
+            "MEDIA DIARIA"
+        ])]
+
         if not main.empty:
             fig.add_trace(
                 go.Bar(
@@ -2678,6 +2712,7 @@ def render_hmji(df):
                     hovertemplate="<b>Pacientes clínicos</b><br>Mês: %{x}<br>Total: %{y:,.0f}<extra></extra>"
                 )
             )
+
         if not avg.empty:
             fig.add_trace(
                 go.Scatter(
@@ -2690,6 +2725,7 @@ def render_hmji(df):
                     hovertemplate="<b>Média diária</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
                 )
             )
+
         fig = apply_plotly_theme(
             fig,
             title="Pacientes clínicos atendidos / média diária",
