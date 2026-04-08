@@ -3313,19 +3313,17 @@ def rh_format_value(nome_indicador, valor):
 
     nome_norm = normalize_text(nome_indicador) or ""
 
-    # indicadores percentuais
-    if (
-        "%" in str(nome_indicador)
-        or "TAXA" in nome_norm
-        or "ABSENTEISMO" in nome_norm
-    ):
-        return f"{valor:,.1f}%".replace(",", "X").replace(".", ",").replace("X", ".")
+    indicadores_percentuais = {
+        "TAXA DE TURNOVER",
+        "ABSENTEISMO",
+    }
 
-    # números inteiros
+    if nome_norm in indicadores_percentuais:
+        return f"{valor * 100:,.2f}%".replace(",", "X").replace(".", ",").replace("X", ".")
+
     if float(valor).is_integer():
         return f"{int(valor):,}".replace(",", ".")
 
-    # números decimais
     return f"{valor:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".")
 RH_ICONS = {
     "TOTAL DE COLABORADORES CLT": "👥",
