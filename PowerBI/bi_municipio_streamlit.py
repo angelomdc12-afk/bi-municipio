@@ -329,10 +329,6 @@ st.set_page_config(page_title="Painel de Gestão Patris", page_icon="📊", layo
 
 check_login()
 
-st.set_page_config(page_title="Painel de Gestão Patris", page_icon="📊", layout="wide")
-
-check_login()
-
 BASE_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = BASE_DIR / "assets"
 
@@ -2971,8 +2967,7 @@ def render_upa_page(df, unidade):
             obitos,
             "Óbitos",
             prefix=f"{unidade}_obitos",
-            unidade=unidade,
-            height=360
+            unidade=unidade
         )
     section_end()
 
