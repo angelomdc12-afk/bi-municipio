@@ -1134,7 +1134,19 @@ def normalize_value(v):
             except Exception:
                 pass
 
-        vv = vv.replace(",", ".")
+        # Normaliza valores numéricos textuais no padrão BR/EN (milhar e decimal)
+        vv = vv.replace("R$", "").replace(" ", "")
+        if "." in vv and "," in vv:
+            # Ex.: 1.234,56 -> 1234.56
+            vv = vv.replace(".", "").replace(",", ".")
+        elif "," in vv:
+            # Ex.: 1234,56 -> 1234.56
+            vv = vv.replace(",", ".")
+        else:
+            # Ex.: 1.234.567 (milhar) -> 1234567
+            if vv.count(".") > 1:
+                vv = vv.replace(".", "")
+
         try:
             return float(vv)
         except Exception:
@@ -1303,6 +1315,7 @@ def load_metas_data(file_bytes=None, _mtime=None):
         "meta",
         "executado_total",
         "meta_total",
+        "executado_total_geral",
     ]
 
     if file_bytes is None:
@@ -1322,6 +1335,7 @@ def load_metas_data(file_bytes=None, _mtime=None):
     rows = []
     meses = None
     categoria_atual = None
+    total_geral_por_mes = {}
 
     for r in range(1, ws.max_row + 1):
         vals = [ws.cell(r, c).value for c in range(1, 16)]
@@ -1338,6 +1352,15 @@ def load_metas_data(file_bytes=None, _mtime=None):
             continue
 
         if col_b_norm == "TOTAL GERAL":
+            for i, c in enumerate(range(3, 15)):  # C:N
+                mes = meses[i] if meses and i < len(meses) else None
+                if mes is None:
+                    continue
+
+                valor = normalize_value(ws.cell(r, c).value)
+                valor_num = pd.to_numeric(pd.Series([valor]), errors="coerce").iloc[0]
+                if pd.notna(valor_num):
+                    total_geral_por_mes[mes] = float(valor_num)
             continue
 
         # linha da categoria = executado
@@ -1379,6 +1402,25 @@ def load_metas_data(file_bytes=None, _mtime=None):
                     "meta_total": None,
                 })
 
+    # Leitura deterministica do TOTAL GERAL na linha 18 (colunas C:N),
+    # conforme layout da planilha de Metas informado pelo usuario.
+    linha_total_geral = 18
+    if ws.max_row >= linha_total_geral:
+        for i, c in enumerate(range(3, 15)):  # C:N
+            mes = None
+            if meses and i < len(meses):
+                mes = meses[i]
+            elif i < len(MESES):
+                mes = MESES[i]
+
+            if mes is None:
+                continue
+
+            valor_linha_18 = normalize_value(ws.cell(linha_total_geral, c).value)
+            valor_linha_18_num = pd.to_numeric(pd.Series([valor_linha_18]), errors="coerce").iloc[0]
+            if pd.notna(valor_linha_18_num):
+                total_geral_por_mes[mes] = float(valor_linha_18_num)
+
     df = pd.DataFrame(rows, columns=colunas_padrao)
 
     if df.empty:
@@ -1395,7 +1437,7 @@ def load_metas_data(file_bytes=None, _mtime=None):
         df.pivot_table(
             index=["categoria", "categoria_norm", "mes", "mes_label"],
             values=["executado", "meta"],
-            aggfunc="max",
+            aggfunc={"executado": "sum", "meta": "max"},
             dropna=False,
         )
         .reset_index()
@@ -1420,7 +1462,42 @@ def load_metas_data(file_bytes=None, _mtime=None):
         how="left"
     )
 
+    resumo["executado_total_geral"] = resumo["mes"].map(total_geral_por_mes)
+
     return resumo[colunas_padrao].reset_index(drop=True)
+
+
+@st.cache_data(show_spinner=False)
+def load_metas_total_geral_map(file_bytes=None, _mtime=None):
+    """Retorna TOTAL GERAL por mês (Mar/26..Fev/27) lendo diretamente a linha 18, colunas C:N."""
+    if file_bytes is None:
+        path = local_excel_path()
+        if not path:
+            return {}
+        wb = openpyxl.load_workbook(path, data_only=True)
+    else:
+        wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True)
+
+    nome_aba = "METAS DO PLANO DE TRABALHO"
+    if nome_aba not in wb.sheetnames:
+        return {}
+
+    ws = wb[nome_aba]
+    linha_total_geral = 18
+    if ws.max_row < linha_total_geral:
+        return {}
+
+    total_geral_map = {}
+    for i, c in enumerate(range(3, 15)):  # C:N
+        mes_key = MESES[i] if i < len(MESES) else None
+        if mes_key is None:
+            continue
+
+        valor = normalize_value(ws.cell(linha_total_geral, c).value)
+        valor_num = pd.to_numeric(pd.Series([valor]), errors="coerce").iloc[0]
+        total_geral_map[MESES_LABEL.get(mes_key, mes_key)] = float(valor_num) if pd.notna(valor_num) else 0.0
+
+    return total_geral_map
 
 @st.cache_data(show_spinner=False)
 def load_financeiro_data(file_bytes=None, _mtime=None):
@@ -1695,10 +1772,9 @@ def render_financeiro_page(fin_df):
     tabela_view["Média mensal"] = tabela_view["Média mensal"].apply(format_currency_br)
     tabela_view["Participação %"] = tabela_view["Participação %"].apply(format_pct_br)
 
-    st.dataframe(
-        tabela_view[["Fornecedor", "Total no período", "Média mensal", "Participação %"]],
-        use_container_width=True,
-        hide_index=True
+    st.table(
+        tabela_view[["Fornecedor", "Total no período", "Média mensal", "Participação %"]]
+        .reset_index(drop=True)
     )
     section_end()
 
@@ -2316,7 +2392,7 @@ def render_meta_card(categoria, executado, meta, atingido_pct, saldo_pct):
     )
 
 
-def render_metas_page(data, metas_df):
+def render_metas_page(data, metas_df, total_geral_map=None):
     st.subheader("Metas do Plano")
 
     if metas_df is None or metas_df.empty:
@@ -2343,9 +2419,45 @@ def render_metas_page(data, metas_df):
     )
 
     total_meta = resumo["meta"].sum()
-    total_executado = resumo["executado"].sum()
+    total_executado_soma = float(resumo["executado"].sum())
+
+    total_geral_por_mes = pd.Series(dtype=float)
+    if total_geral_map:
+        total_geral_por_mes = pd.Series(total_geral_map, dtype=float)
+    elif "executado_total_geral" in metas_df.columns:
+        total_geral_por_mes = (
+            metas_df[["mes", "mes_label", "executado_total_geral"]]
+            .dropna(subset=["mes_label", "executado_total_geral"])
+            .groupby("mes_label", as_index=True)["executado_total_geral"]
+            .max()
+            .astype(float)
+        )
+
+    # Regra solicitada: usar somente o TOTAL GERAL do mes de referencia.
+    # O mes de referencia deve seguir exatamente o filtro selecionado na sidebar.
+    ordem_meses_label = [MESES_LABEL[m] for m in MESES]
+    meses_filtrados = [m for m in ordem_meses_label if m in (meses_selecionados if "meses_selecionados" in globals() else [])]
+    mes_referencia = meses_filtrados[-1] if meses_filtrados else None
+
+    # Fallback defensivo: se nao houver filtro valido, usa o ultimo mes presente em metas_df.
+    if mes_referencia is None and "mes" in metas_df.columns:
+        meses_presentes = set(metas_df["mes"].dropna().astype(str).tolist())
+        meses_disponiveis_ref = [m for m in MESES if m in meses_presentes]
+        mes_referencia = MESES_LABEL.get(meses_disponiveis_ref[-1], meses_disponiveis_ref[-1]) if meses_disponiveis_ref else None
+
+    total_executado = 0.0
+    if mes_referencia and not total_geral_por_mes.empty:
+        valor_mes_ref = total_geral_por_mes.get(mes_referencia)
+        if valor_mes_ref is not None and pd.notna(valor_mes_ref):
+            total_executado = float(valor_mes_ref)
+
     total_pct = percent_atingido(total_executado, total_meta)
     total_saldo_pct = ((total_executado - total_meta) / total_meta) * 100 if total_meta else None
+
+    if mes_referencia:
+        subtitle_executado_total = f"▲ total geral da planilha em {mes_referencia}"
+    else:
+        subtitle_executado_total = "▲ total geral da planilha (mês referência indisponível)"
 
     # Regras visuais solicitadas para os KPIs de metas
     if total_pct is not None and not pd.isna(total_pct) and total_pct > 99.99:
@@ -2377,7 +2489,7 @@ def render_metas_page(data, metas_df):
     section_start("Resumo geral das metas", "Comparativo consolidado entre executado e meta da aba Metas do Plano")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        top_kpi_card("Executado total", format_compact_number(total_executado), icon="📌", subtitle="▲ base no período filtrado", accent_color="#22C55E", subtitle_color="#16A34A")
+        top_kpi_card("Executado total", format_compact_number(total_executado), icon="📌", subtitle=subtitle_executado_total, accent_color="#22C55E", subtitle_color="#16A34A")
     with c2:
         top_kpi_card("Meta total", format_compact_number(total_meta), icon="🎯", subtitle="▲ somatório das metas", accent_color="#3B82F6", subtitle_color="#2563EB")
     with c3:
@@ -2435,7 +2547,13 @@ def render_metas_page(data, metas_df):
     tabela.columns = ["Meta do plano", "Executado", "Meta", "% atingido", "Saldo %"]
 
     with st.expander("Detalhamento das metas"):
-        st.dataframe(tabela, use_container_width=True, hide_index=True)
+        st.table(tabela.reset_index(drop=True))
+        st.caption(
+            f"Auditoria do executado total: total exibido = {format_compact_number(total_executado)} | "
+            f"fonte = TOTAL GERAL | "
+            f"mês referência = {mes_referencia if mes_referencia else '-'} | "
+            f"soma categorias (somente conferência) = {format_compact_number(total_executado_soma)}"
+        )
         st.caption("Observação: o executado é calculado com base nos dados disponíveis na planilha carregada. Categorias sem produção correspondente na base atual permanecem zeradas.")
 def card(title, value, icon="📊", subtitle="Indicador consolidado"):
     value = clean_card_value(value)
@@ -4316,6 +4434,7 @@ _mtime = _local_file_mtime()
 data, source_name = load_workbook_data(file_bytes) if uploaded else load_workbook_data(None, _mtime=_mtime)
 metas_data = load_metas_data(file_bytes) if uploaded else load_metas_data(None, _mtime=_mtime)
 financeiro_data = load_financeiro_data(file_bytes) if uploaded else load_financeiro_data(None, _mtime=_mtime)
+metas_total_geral_map = load_metas_total_geral_map(file_bytes) if uploaded else load_metas_total_geral_map(None, _mtime=_mtime)
 
 if data.empty:
     base = Path(__file__).parent
@@ -4384,7 +4503,10 @@ elif pagina == "Financeiro":
     render_financeiro_page(financeiro_data)
 
 else:
-    render_metas_page(data, metas_data)
+    render_metas_page(data, metas_data, metas_total_geral_map)
 
 with st.expander("Base transformada"):
-    st.dataframe(data, use_container_width=True, hide_index=True)
+    if st.checkbox("Mostrar tabela (primeiras 300 linhas)", key="show_base_transformada_table"):
+        st.table(data.head(300).reset_index(drop=True))
+    else:
+        st.caption("Tabela oculta por padrão para reduzir erros de carregamento no navegador.")
