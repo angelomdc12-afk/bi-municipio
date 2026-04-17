@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Preview Opção 3 – Healthcare Clean</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'Segoe UI', Inter, Arial, sans-serif; background:#F7F9FC; display:flex; height:100vh; overflow:hidden; }
+
+  /* ── SIDEBAR ── */
+  .sidebar {
+    width: 235px; min-width: 235px;
+    background: #FFFFFF;
+    display: flex; flex-direction: column;
+    border-right: 1px solid #E8EEF6;
+    box-shadow: 4px 0 20px rgba(15,23,42,0.05);
+  }
+  .sidebar-logo {
+    padding: 20px 18px 16px;
+    display: flex; align-items: center; gap: 12px;
+    border-bottom: 1px solid #F1F5F9;
+  }
+  .logo-icon {
+    width: 42px; height: 42px; border-radius: 14px;
+    background: linear-gradient(135deg, #0EA472, #06845B);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; box-shadow: 0 6px 16px rgba(14,164,114,0.30);
+  }
+  .logo-text .title { font-size: 13.5px; font-weight: 800; color: #0F172A; }
+  .logo-text .sub { font-size: 10px; color: #94A3B8; margin-top: 1px; }
+
+  .sec-label {
+    font-size: 9.5px; font-weight: 700; color: #CBD5E1;
+    letter-spacing: 1.3px; text-transform: uppercase;
+    padding: 16px 18px 6px;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 16px; cursor: pointer; transition: all 0.15s;
+    color: #64748B; font-size: 13px; font-weight: 500;
+    margin: 1px 8px; border-radius: 10px;
+  }
+  .nav-item:hover { background: #F1F5F9; color: #0F172A; }
+  .nav-item.active {
+    background: linear-gradient(90deg, #ECFDF5, #D1FAE5);
+    color: #065F46; font-weight: 700;
+    border-left: 3px solid #0EA472;
+    padding-left: 13px;
+  }
+  .nav-item .icon { font-size: 15px; }
+
+  .sidebar-bottom {
+    margin-top: auto;
+    padding: 16px 14px;
+    border-top: 1px solid #F1F5F9;
+  }
+  .filt-label { font-size: 10px; font-weight: 700; color: #94A3B8; letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 8px; }
+  .filt-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 14px; }
+  .fchip {
+    background: #F8FAFC; border: 1px solid #E2E8F0;
+    border-radius: 20px; padding: 3px 10px;
+    font-size: 11px; color: #64748B; cursor: pointer;
+  }
+  .fchip.sel { background: #ECFDF5; border-color: #6EE7B7; color: #065F46; font-weight: 700; }
+
+  .user-row { display: flex; align-items: center; gap: 9px; }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, #0EA472, #06845B); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; color:#fff; }
+  .u-name { font-size: 12px; font-weight: 700; color: #0F172A; }
+  .u-role { font-size: 10px; color: #94A3B8; }
+
+  /* ── MAIN ── */
+  .main { flex:1; overflow-y: auto; padding: 20px 22px; background: #F4F8FB; }
+
+  /* TOPBAR */
+  .topbar {
+    background: linear-gradient(115deg, #065F46 0%, #0EA472 60%, #10B981 100%);
+    border-radius: 20px; padding: 18px 22px;
+    margin-bottom: 20px;
+    box-shadow: 0 10px 30px rgba(6,95,70,0.22);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .hero-pill {
+    background: rgba(255,255,255,0.18); border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 30px; padding: 3px 12px;
+    font-size: 10.5px; color: rgba(255,255,255,0.92); font-weight: 600;
+    display: inline-flex; align-items: center; gap: 5px; margin-bottom: 8px;
+  }
+  .topbar h1 { color: #fff; font-size: 21px; font-weight: 800; letter-spacing: -0.4px; }
+  .topbar .sub { color: rgba(255,255,255,0.70); font-size: 12.5px; margin-top: 3px; }
+  .hero-right { display: flex; gap: 10px; }
+  .hpill {
+    background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.22);
+    border-radius: 14px; padding: 10px 16px; text-align: center; backdrop-filter: blur(4px);
+  }
+  .hpill .v { color: #fff; font-size: 20px; font-weight: 800; }
+  .hpill .l { color: rgba(255,255,255,0.65); font-size: 10px; margin-top: 2px; }
+
+  /* KPI */
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
+  .kcard {
+    background: #fff; border-radius: 16px;
+    padding: 16px 18px; border: 1px solid #EEF2F8;
+    box-shadow: 0 2px 10px rgba(15,23,42,0.06);
+    position: relative;
+  }
+  .kcard .top-line { position: absolute; top:0; left:0; right:0; height: 4px; border-radius: 16px 16px 0 0; }
+  .kcard.t { --c: #0EA472; }
+  .kcard.b { --c: #3B82F6; }
+  .kcard.o { --c: #F97316; }
+  .kcard.r { --c: #EF4444; }
+  .kcard .top-line { background: var(--c); }
+  .kcard .icon-wrap {
+    width: 38px; height: 38px; border-radius: 10px;
+    background: color-mix(in srgb, var(--c) 12%, transparent);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; margin-bottom: 10px;
+  }
+  .kcard .lbl { font-size: 11px; color: #64748B; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; }
+  .kcard .val { font-size: 26px; font-weight: 800; color: #0F172A; letter-spacing: -0.8px; }
+  .kcard .meta { font-size: 11px; color: #94A3B8; margin-top: 5px; display: flex; align-items: center; gap: 4px; }
+  .up { color: #0EA472; font-weight: 700; }
+  .dn { color: #EF4444; font-weight: 700; }
+
+  /* DIVIDER */
+  .section-head { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; }
+  .section-head .sh-title { font-size: 13px; font-weight: 700; color: #0F172A; }
+  .section-head::after { content: ''; flex: 1; height: 1px; background: #E8EEF6; }
+
+  /* CHARTS */
+  .chart-row { display: grid; grid-template-columns: 3fr 2fr; gap: 14px; margin-bottom: 14px; }
+  .ccard {
+    background: #fff; border-radius: 18px;
+    padding: 18px 20px; border: 1px solid #EEF2F8;
+    box-shadow: 0 2px 12px rgba(15,23,42,0.05);
+  }
+  .ccard .ct { font-size: 13px; font-weight: 700; color: #0F172A; }
+  .ccard .cs { font-size: 11px; color: #94A3B8; margin-top: 2px; margin-bottom: 14px; }
+  .chart-area { background: #F8FBFF; border-radius: 12px; height: 155px; display: flex; align-items: flex-end; padding: 0 16px; gap: 6px; overflow: hidden; }
+  .bar { border-radius: 5px 5px 0 0; flex:1; min-width: 16px; }
+
+  /* TABLE */
+  .tcard {
+    background: #fff; border-radius: 18px;
+    padding: 18px 20px; border: 1px solid #EEF2F8;
+    box-shadow: 0 2px 12px rgba(15,23,42,0.05);
+  }
+  .thead-r { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .ttl2 { font-size: 13px; font-weight: 700; color: #0F172A; }
+  .tbadge { background: #ECFDF5; color: #065F46; font-size: 11px; font-weight: 700; border-radius: 20px; padding: 3px 10px; border: 1px solid #A7F3D0; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { color: #94A3B8; font-weight: 700; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px; padding: 7px 10px; border-bottom: 2px solid #F1F5F9; text-align: left; }
+  td { padding: 9px 10px; border-bottom: 1px solid #F8FAFC; color: #334155; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #F8FDF9; }
+  .dpill { border-radius: 20px; padding: 2px 10px; font-size: 11px; font-weight: 700; display: inline-block; }
+  .dpill.g { background: #ECFDF5; color: #065F46; border: 1px solid #A7F3D0; }
+  .dpill.y { background: #FFFBEB; color: #92400E; border: 1px solid #FDE68A; }
+  .dpill.r { background: #FEF2F2; color: #991B1B; border: 1px solid #FECACA; }
+
+  .option-badge { position:fixed; top:12px; right:14px; background:linear-gradient(135deg, #0EA472, #065F46); color:#fff; border-radius:20px; padding:5px 14px; font-size:11px; font-weight:700; z-index:999; box-shadow:0 4px 14px rgba(6,95,70,0.35); }
+  .watermark { text-align:center; font-size:10px; color:#CBD5E1; padding:10px 0; }
+</style>
+</head>
+<body>
+<div class="option-badge">Opção 3 — Healthcare Clean</div>
+
+<!-- SIDEBAR -->
+<div class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-icon">🏥</div>
+    <div class="logo-text">
+      <div class="title">Patris Saúde</div>
+      <div class="sub">Gestão Municipal · Luziânia</div>
+    </div>
+  </div>
+
+  <div class="sec-label">Painel</div>
+  <div class="nav-item active"><span class="icon">🏠</span> Visão Geral</div>
+  <div class="nav-item"><span class="icon">🚑</span> UPA Luziânia</div>
+  <div class="nav-item"><span class="icon">🚑</span> UPA Jardim Ingá</div>
+  <div class="nav-item"><span class="icon">🏨</span> HMJI</div>
+
+  <div class="sec-label">Programas</div>
+  <div class="nav-item"><span class="icon">💊</span> Atenção Primária</div>
+  <div class="nav-item"><span class="icon">🧠</span> Saúde Mental</div>
+  <div class="nav-item"><span class="icon">📊</span> Metas do Plano</div>
+  <div class="nav-item"><span class="icon">👥</span> Gestão de Pessoas</div>
+
+  <div class="sidebar-bottom">
+    <div class="filt-label">Período ativo</div>
+    <div class="filt-chips">
+      <div class="fchip sel">Mar/26</div>
+      <div class="fchip sel">Abr/26</div>
+      <div class="fchip">Mai/26</div>
+      <div class="fchip">Jun/26</div>
+    </div>
+    <div class="user-row">
+      <div class="avatar">A</div>
+      <div>
+        <div class="u-name">Admin</div>
+        <div class="u-role">Acesso total</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+
+  <div class="topbar">
+    <div>
+      <div class="hero-pill">🌿 Portal de Saúde Municipal</div>
+      <h1>UPA Luziânia</h1>
+      <div class="sub">Indicadores operacionais · Mar/26 – Abr/26</div>
+    </div>
+    <div class="hero-right">
+      <div class="hpill"><div class="v">4.821</div><div class="l">Atendimentos</div></div>
+      <div class="hpill"><div class="v">97,3%</div><div class="l">Ocupação</div></div>
+      <div class="hpill"><div class="v">14</div><div class="l">Dias</div></div>
+    </div>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kcard t"><div class="top-line"></div>
+      <div class="icon-wrap">👨‍⚕️</div>
+      <div class="lbl">Atendimentos</div>
+      <div class="val">4.821</div>
+      <div class="meta"><span class="up">▲ 8,4%</span> vs anterior</div>
+    </div>
+    <div class="kcard b"><div class="top-line"></div>
+      <div class="icon-wrap">✅</div>
+      <div class="lbl">Taxa resolução</div>
+      <div class="val">84,2%</div>
+      <div class="meta"><span class="up">▲ 2,1%</span> acima da meta</div>
+    </div>
+    <div class="kcard o"><div class="top-line"></div>
+      <div class="icon-wrap">⏱️</div>
+      <div class="lbl">T. espera médio</div>
+      <div class="val">01:24</div>
+      <div class="meta"><span class="dn">Meta: 01:00h</span></div>
+    </div>
+    <div class="kcard r"><div class="top-line"></div>
+      <div class="icon-wrap">📋</div>
+      <div class="lbl">Óbitos</div>
+      <div class="val">12</div>
+      <div class="meta"><span class="up">▼ 3</span> vs anterior</div>
+    </div>
+  </div>
+
+  <div class="section-head"><div class="sh-title">Gráficos Operacionais</div></div>
+
+  <div class="chart-row">
+    <div class="ccard">
+      <div class="ct">Atendimentos por Classificação de Risco</div>
+      <div class="cs">Distribuição mensal por nível de urgência</div>
+      <div class="chart-area">
+        <div class="bar" style="height:62%; background:#1E3A8A;"></div>
+        <div class="bar" style="height:44%; background:#1E3A8A;"></div>
+        <div class="bar" style="height:78%; background:#16A34A;"></div>
+        <div class="bar" style="height:55%; background:#16A34A;"></div>
+        <div class="bar" style="height:38%; background:#EAB308;"></div>
+        <div class="bar" style="height:48%; background:#EAB308;"></div>
+        <div class="bar" style="height:28%; background:#F97316;"></div>
+        <div class="bar" style="height:18%; background:#DC2626;"></div>
+      </div>
+    </div>
+    <div class="ccard">
+      <div class="ct">Origem dos Pacientes</div>
+      <div class="cs">Cidade vs outras localidades</div>
+      <div style="display:flex;align-items:center;justify-content:center;height:155px;">
+        <svg viewBox="0 0 120 120" width="130" height="130">
+          <circle cx="60" cy="60" r="48" fill="none" stroke="#F1F5F9" stroke-width="18"/>
+          <circle cx="60" cy="60" r="48" fill="none" stroke="#0EA472" stroke-width="18"
+            stroke-dasharray="181 121" stroke-dashoffset="0" transform="rotate(-90 60 60)"/>
+          <circle cx="60" cy="60" r="48" fill="none" stroke="#3B82F6" stroke-width="18"
+            stroke-dasharray="60 242" stroke-dashoffset="-181" transform="rotate(-90 60 60)"/>
+          <text x="60" y="63" text-anchor="middle" font-size="14" font-weight="800" fill="#0F172A">60%</text>
+          <text x="60" y="75" text-anchor="middle" font-size="8" fill="#64748B">Cidade</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <div class="tcard">
+    <div class="thead-r">
+      <div class="ttl2">Indicadores por Painel</div>
+      <div class="tbadge">Abr/26</div>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Indicador</th><th>Realizado</th><th>Meta</th><th>% Atingimento</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Atendimentos totais</td><td>4.821</td><td>4.500</td><td>107%</td><td><span class="dpill g">Acima da meta</span></td></tr>
+        <tr><td>Tempo médio de espera</td><td>01:24h</td><td>01:00h</td><td>71%</td><td><span class="dpill r">Abaixo da meta</span></td></tr>
+        <tr><td>Taxa de resolução</td><td>84,2%</td><td>82%</td><td>103%</td><td><span class="dpill g">Acima da meta</span></td></tr>
+        <tr><td>Pacientes por médico/dia</td><td>38</td><td>40</td><td>95%</td><td><span class="dpill y">Próximo da meta</span></td></tr>
+        <tr><td>Óbitos</td><td>12</td><td>10</td><td>83%</td><td><span class="dpill y">Próximo da meta</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="watermark">Painel de Gestão Patris · Luziânia · Preview Visual — Opção 3: Healthcare Clean</div>
+</div>
+</body>
+</html>

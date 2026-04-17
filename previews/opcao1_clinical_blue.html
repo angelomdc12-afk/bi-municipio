@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Preview Opção 1 – Clinical Blue</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'Segoe UI', Inter, Arial, sans-serif; background:#F0F4FA; display:flex; height:100vh; overflow:hidden; }
+
+  /* ── SIDEBAR ── */
+  .sidebar {
+    width: 240px; min-width: 240px;
+    background: linear-gradient(175deg, #0A3D6B 0%, #0D2F52 55%, #071E38 100%);
+    display: flex; flex-direction: column;
+    padding: 0; border-right: 1px solid rgba(255,255,255,0.06);
+    box-shadow: 4px 0 24px rgba(7,30,56,0.25);
+  }
+
+  .sidebar-logo {
+    padding: 20px 18px 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .sidebar-logo .logo-icon {
+    width: 40px; height: 40px; border-radius: 12px;
+    background: linear-gradient(135deg, #1A8FE3, #0D6EBD);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; box-shadow: 0 4px 12px rgba(26,143,227,0.4);
+  }
+  .sidebar-logo .logo-text { color: #fff; }
+  .sidebar-logo .logo-text .title { font-size: 13px; font-weight: 700; letter-spacing: 0.2px; }
+  .sidebar-logo .logo-text .sub { font-size: 10px; color: rgba(255,255,255,0.50); margin-top: 1px; }
+
+  .sidebar-section { padding: 14px 12px 6px; }
+  .sidebar-section .label {
+    font-size: 9.5px; font-weight: 700; color: rgba(255,255,255,0.35);
+    letter-spacing: 1.2px; text-transform: uppercase; padding: 0 6px; margin-bottom: 6px;
+  }
+
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 10px; border-radius: 12px; margin-bottom: 3px;
+    cursor: pointer; transition: all 0.18s;
+    color: rgba(255,255,255,0.65); font-size: 13px; font-weight: 500;
+  }
+  .nav-item:hover { background: rgba(255,255,255,0.08); color: #fff; }
+  .nav-item.active {
+    background: linear-gradient(90deg, rgba(26,143,227,0.28), rgba(26,143,227,0.10));
+    color: #7CC8F8; font-weight: 700;
+    border-left: 3px solid #1A8FE3; padding-left: 7px;
+    box-shadow: inset 0 0 0 1px rgba(26,143,227,0.15);
+  }
+  .nav-item .icon { font-size: 16px; width: 22px; text-align: center; }
+
+  .sidebar-filter { padding: 14px 12px; border-top: 1px solid rgba(255,255,255,0.06); margin-top: auto; }
+  .filter-label { font-size: 10px; font-weight: 700; color: rgba(255,255,255,0.40); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px; }
+  .filter-chip-row { display: flex; flex-wrap: wrap; gap: 5px; }
+  .filter-chip {
+    background: rgba(255,255,255,0.09); border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 20px; padding: 4px 10px;
+    font-size: 11px; color: rgba(255,255,255,0.75); font-weight: 500; cursor: pointer;
+  }
+  .filter-chip.sel { background: rgba(26,143,227,0.30); border-color: rgba(26,143,227,0.55); color: #8ED4FF; }
+
+  .sidebar-user {
+    padding: 12px 14px; border-top: 1px solid rgba(255,255,255,0.06);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .user-avatar {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: linear-gradient(135deg, #1A8FE3, #0D6EBD);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; color: #fff; font-weight: 700;
+  }
+  .user-info .name { font-size: 12px; font-weight: 600; color: #fff; }
+  .user-info .role { font-size: 10px; color: rgba(255,255,255,0.42); }
+
+  /* ── MAIN ── */
+  .main { flex: 1; overflow-y: auto; padding: 20px 22px; background: #EEF3FB; }
+
+  /* TOPBAR */
+  .topbar {
+    background: linear-gradient(110deg, #0F5AA0 0%, #1A7BD5 60%, #1567BB 100%);
+    border-radius: 18px; padding: 18px 22px;
+    margin-bottom: 20px;
+    box-shadow: 0 8px 28px rgba(15,90,160,0.25);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .topbar-left .hero-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.20);
+    border-radius: 20px; padding: 3px 12px; font-size: 11px;
+    color: rgba(255,255,255,0.90); font-weight: 600; margin-bottom: 8px;
+  }
+  .topbar-left h1 { color: #fff; font-size: 22px; font-weight: 800; letter-spacing: -0.5px; }
+  .topbar-left .subtitle { color: rgba(255,255,255,0.72); font-size: 13px; margin-top: 3px; }
+  .topbar-right { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .stat-pill {
+    background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 14px; padding: 8px 14px; text-align: center;
+    backdrop-filter: blur(6px);
+  }
+  .stat-pill .val { color: #fff; font-size: 18px; font-weight: 800; }
+  .stat-pill .lbl { color: rgba(255,255,255,0.65); font-size: 10px; font-weight: 500; margin-top: 1px; }
+
+  /* KPI GRID */
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  .kpi-card {
+    background: #fff; border-radius: 16px;
+    padding: 16px 18px;
+    box-shadow: 0 2px 12px rgba(15,23,42,0.07);
+    border: 1px solid #E8EEF6;
+    position: relative; overflow: hidden;
+  }
+  .kpi-card::before {
+    content: ''; position: absolute; top:0; left:0; right:0; height: 3px;
+    border-radius: 16px 16px 0 0;
+  }
+  .kpi-card.blue::before  { background: linear-gradient(90deg, #1A8FE3, #5BB8FF); }
+  .kpi-card.green::before { background: linear-gradient(90deg, #0FA878, #3DD68C); }
+  .kpi-card.orange::before{ background: linear-gradient(90deg, #F97316, #FDBA74); }
+  .kpi-card.red::before   { background: linear-gradient(90deg, #EF4444, #FCA5A5); }
+  .kpi-label { font-size: 11px; color: #64748B; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px; }
+  .kpi-value { font-size: 28px; font-weight: 800; color: #0F172A; letter-spacing: -1px; }
+  .kpi-sub { font-size: 11px; color: #94A3B8; margin-top: 4px; display: flex; align-items: center; gap: 4px; }
+  .kpi-sub .up { color: #0FA878; font-weight: 700; }
+  .kpi-sub .down { color: #EF4444; font-weight: 700; }
+  .kpi-icon { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); font-size: 28px; opacity: 0.12; }
+
+  /* CHART GRID */
+  .chart-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; margin-bottom: 16px; }
+  .chart-card {
+    background: #fff; border-radius: 18px;
+    padding: 18px 20px;
+    box-shadow: 0 2px 14px rgba(15,23,42,0.07);
+    border: 1px solid #E8EEF6;
+  }
+  .chart-card .card-title { font-size: 13px; font-weight: 700; color: #0F172A; margin-bottom: 4px; }
+  .chart-card .card-sub { font-size: 11px; color: #94A3B8; margin-bottom: 14px; }
+  .chart-placeholder {
+    background: linear-gradient(135deg, #F0F6FF 0%, #E8F2FC 100%);
+    border-radius: 12px; height: 170px;
+    display: flex; align-items: center; justify-content: center;
+    position: relative; overflow: hidden;
+  }
+  .bar-mock { display: flex; align-items: flex-end; gap: 6px; padding: 0 20px; height: 130px; }
+  .bar { border-radius: 6px 6px 0 0; min-width: 22px; flex: 1; }
+  .line-mock { position: absolute; inset: 20px 20px 30px; }
+  .line-mock svg { width:100%; height:100%; }
+
+  /* TABLE SECTION */
+  .table-card {
+    background: #fff; border-radius: 18px;
+    padding: 18px 20px;
+    box-shadow: 0 2px 14px rgba(15,23,42,0.07);
+    border: 1px solid #E8EEF6;
+    margin-bottom: 16px;
+  }
+  .table-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .table-title { font-size: 13px; font-weight: 700; color: #0F172A; }
+  .badge { background: #EFF6FF; color: #1A8FE3; font-size: 11px; font-weight: 700; border-radius: 20px; padding: 3px 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { color: #64748B; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 10px; border-bottom: 2px solid #F1F5F9; text-align: left; }
+  td { padding: 9px 10px; border-bottom: 1px solid #F8FAFC; color: #334155; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #F8FBFF; }
+  .pill { border-radius: 20px; padding: 2px 10px; font-size: 11px; font-weight: 700; display: inline-block; }
+  .pill.g { background: #DCFCE7; color: #15803D; }
+  .pill.y { background: #FEF9C3; color: #A16207; }
+  .pill.r { background: #FEE2E2; color: #B91C1C; }
+
+  /* WATERMARK */
+  .watermark { text-align:center; font-size:10px; color:#94A3B8; padding:8px 0; }
+  .option-badge { position:fixed; top:12px; right:14px; background:#0F5AA0; color:#fff; border-radius:20px; padding:5px 14px; font-size:11px; font-weight:700; z-index:999; box-shadow:0 4px 14px rgba(15,90,160,0.35); }
+</style>
+</head>
+<body>
+
+<div class="option-badge">Opção 1 — Clinical Blue</div>
+
+<!-- SIDEBAR -->
+<div class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-icon">🏥</div>
+    <div class="logo-text">
+      <div class="title">Patris Saúde</div>
+      <div class="sub">Gestão Municipal</div>
+    </div>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="label">Unidades</div>
+    <div class="nav-item active"><span class="icon">🏠</span> Visão Geral</div>
+    <div class="nav-item"><span class="icon">🚑</span> UPA Luziânia</div>
+    <div class="nav-item"><span class="icon">🚑</span> UPA Jardim Ingá</div>
+    <div class="nav-item"><span class="icon">🏨</span> HMJI</div>
+    <div class="nav-item"><span class="icon">💊</span> Atenção Primária</div>
+    <div class="nav-item"><span class="icon">🧠</span> Saúde Mental</div>
+    <div class="nav-item"><span class="icon">📊</span> Metas do Plano</div>
+    <div class="nav-item"><span class="icon">👥</span> Gestão de Pessoas</div>
+  </div>
+
+  <div class="sidebar-filter">
+    <div class="filter-label">Período</div>
+    <div class="filter-chip-row">
+      <div class="filter-chip sel">Mar/26</div>
+      <div class="filter-chip sel">Abr/26</div>
+      <div class="filter-chip">Mai/26</div>
+      <div class="filter-chip">Jun/26</div>
+      <div class="filter-chip">Jul/26</div>
+    </div>
+  </div>
+
+  <div class="sidebar-user">
+    <div class="user-avatar">A</div>
+    <div class="user-info">
+      <div class="name">Admin</div>
+      <div class="role">Acesso total</div>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+
+  <!-- TOPBAR HERO -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="hero-badge">🏥 Portal de Gestão em Saúde</div>
+      <h1>UPA Luziânia</h1>
+      <div class="subtitle">Indicadores operacionais · Mar/26 – Abr/26</div>
+    </div>
+    <div class="topbar-right">
+      <div class="stat-pill"><div class="val">4.821</div><div class="lbl">Atendimentos</div></div>
+      <div class="stat-pill"><div class="val">97,3%</div><div class="lbl">Ocupação</div></div>
+      <div class="stat-pill"><div class="val">14</div><div class="lbl">Dias analisados</div></div>
+    </div>
+  </div>
+
+  <!-- KPI CARDS -->
+  <div class="kpi-grid">
+    <div class="kpi-card blue">
+      <div class="kpi-label">Atendimentos totais</div>
+      <div class="kpi-value">4.821</div>
+      <div class="kpi-sub"><span class="up">▲ 8,4%</span> vs mês anterior</div>
+      <div class="kpi-icon">👨‍⚕️</div>
+    </div>
+    <div class="kpi-card green">
+      <div class="kpi-label">Taxa de resolução</div>
+      <div class="kpi-value">84,2%</div>
+      <div class="kpi-sub"><span class="up">▲ 2,1%</span> acima da meta</div>
+      <div class="kpi-icon">✅</div>
+    </div>
+    <div class="kpi-card orange">
+      <div class="kpi-label">Tempo médio espera</div>
+      <div class="kpi-value">01:24</div>
+      <div class="kpi-sub"><span class="down">▼ Meta: 01:00</span></div>
+      <div class="kpi-icon">⏱️</div>
+    </div>
+    <div class="kpi-card red">
+      <div class="kpi-label">Óbitos registrados</div>
+      <div class="kpi-value">12</div>
+      <div class="kpi-sub"><span class="up">▼ 3</span> vs período anterior</div>
+      <div class="kpi-icon">📋</div>
+    </div>
+  </div>
+
+  <!-- CHARTS -->
+  <div class="chart-grid">
+    <div class="chart-card">
+      <div class="card-title">Atendimentos por Classificação de Risco</div>
+      <div class="card-sub">Distribuição mensal por nível de urgência</div>
+      <div class="chart-placeholder">
+        <div class="bar-mock">
+          <div class="bar" style="height:65%; background:#1A3A8F;"></div>
+          <div class="bar" style="height:45%; background:#1A3A8F;"></div>
+          <div class="bar" style="height:80%; background:#16A34A;"></div>
+          <div class="bar" style="height:55%; background:#16A34A;"></div>
+          <div class="bar" style="height:40%; background:#EAB308;"></div>
+          <div class="bar" style="height:50%; background:#EAB308;"></div>
+          <div class="bar" style="height:30%; background:#F97316;"></div>
+          <div class="bar" style="height:20%; background:#DC2626;"></div>
+        </div>
+      </div>
+    </div>
+    <div class="chart-card">
+      <div class="card-title">Origem dos Pacientes</div>
+      <div class="card-sub">Cidade vs outras localidades</div>
+      <div class="chart-placeholder" style="height:170px;">
+        <svg viewBox="0 0 120 120" width="120" height="120">
+          <circle cx="60" cy="60" r="50" fill="none" stroke="#E8EEF6" stroke-width="20"/>
+          <circle cx="60" cy="60" r="50" fill="none" stroke="#1A8FE3" stroke-width="20"
+            stroke-dasharray="188 127" stroke-dashoffset="0" transform="rotate(-90 60 60)"/>
+          <circle cx="60" cy="60" r="50" fill="none" stroke="#0FA878" stroke-width="20"
+            stroke-dasharray="80 235" stroke-dashoffset="-188" transform="rotate(-90 60 60)"/>
+          <text x="60" y="64" text-anchor="middle" font-size="14" font-weight="800" fill="#0F172A">60%</text>
+          <text x="60" y="76" text-anchor="middle" font-size="8" fill="#64748B">Cidade</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- TABLE -->
+  <div class="table-card">
+    <div class="table-header">
+      <div class="table-title">Indicadores por Painel</div>
+      <div class="badge">Abr/26</div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Indicador</th>
+          <th>Realizado</th>
+          <th>Meta</th>
+          <th>% Atingimento</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Atendimentos totais</td><td>4.821</td><td>4.500</td><td>107%</td><td><span class="pill g">Acima da meta</span></td></tr>
+        <tr><td>Tempo médio de espera</td><td>01:24h</td><td>01:00h</td><td>71%</td><td><span class="pill r">Abaixo da meta</span></td></tr>
+        <tr><td>Taxa de resolução</td><td>84,2%</td><td>82%</td><td>103%</td><td><span class="pill g">Acima da meta</span></td></tr>
+        <tr><td>Pacientes por médico/dia</td><td>38</td><td>40</td><td>95%</td><td><span class="pill y">Próximo da meta</span></td></tr>
+        <tr><td>Óbitos</td><td>12</td><td>10</td><td>83%</td><td><span class="pill y">Próximo da meta</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="watermark">Painel de Gestão Patris · Luziânia · Preview Visual — Opção 1: Clinical Blue</div>
+</div>
+
+</body>
+</html>

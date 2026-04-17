@@ -3,6 +3,8 @@ from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
 import base64
+import html
+import re
 
 import openpyxl
 import pandas as pd
@@ -11,7 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
     
 USUARIOS_APP = {
-    "admin": "Mudar36315515#26%",
+    "admin": "36315515",
     "vittor": "patris2026",
     "wendel": "inovar2026",
     "guilherme": "patris2026",
@@ -333,6 +335,7 @@ BASE_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = BASE_DIR / "assets"
 
 LOGO_PATRIS = ASSETS_DIR / "patris.png"
+LOGO_SIDEBAR = ASSETS_DIR / "logosemfundo.png"
 LOGO_PREFEITURA = ASSETS_DIR / "prefeitura.png"
 BACKGROUND_IMG = ASSETS_DIR / "background.png"
 
@@ -346,6 +349,8 @@ def image_to_base64(path):
     return base64.b64encode(path.read_bytes()).decode("utf-8")
 
 BACKGROUND_BASE64 = image_to_base64(BACKGROUND_IMG)
+LOGO_PATRIS_BASE64 = image_to_base64(LOGO_PATRIS)
+LOGO_SIDEBAR_BASE64 = image_to_base64(LOGO_SIDEBAR) or LOGO_PATRIS_BASE64
 
 st.markdown(f"""
 <style>
@@ -625,17 +630,90 @@ div[data-baseweb="input"] > div {
 
 /* ===== PLOTLY CONTAINER ===== */
 div[data-testid="stPlotlyChart"] {
-    background: #071224 !important;
-    border: none !important;
-    border-radius: 22px !important;
-    padding: 0.35rem 0.35rem 0.15rem 0.35rem !important;
-    box-shadow: none !important;
+    background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%) !important;
+    border: 1px solid #E2E8F0 !important;
+    border-radius: 18px !important;
+    padding: 0.45rem 0.45rem 0.25rem 0.45rem !important;
+    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06) !important;
 }
 
 div[data-testid="stPlotlyChart"] > div {
     background: transparent !important;
     border: none !important;
     box-shadow: none !important;
+}
+
+.chart-exec-header {
+    background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
+    border: 1px solid #E2E8F0;
+    border-bottom: none;
+    border-radius: 18px 18px 0 0;
+    padding: 12px 14px 10px 14px;
+    margin-bottom: -8px;
+    box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05);
+}
+
+.chart-exec-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.chart-exec-title {
+    font-size: 15px;
+    font-weight: 800;
+    color: #0F172A;
+    line-height: 1.25;
+    letter-spacing: -0.2px;
+}
+
+.chart-exec-subtitle {
+    font-size: 12px;
+    color: #64748B;
+    margin-top: 3px;
+    line-height: 1.35;
+}
+
+.chart-exec-chip {
+    white-space: nowrap;
+    font-size: 11px;
+    font-weight: 700;
+    color: #0F6CBD;
+    background: #EAF3FF;
+    border: 1px solid #BFDBFE;
+    border-radius: 999px;
+    padding: 4px 9px;
+}
+
+.chart-exec-chip-success {
+    color: #166534;
+    background: #DCFCE7;
+    border-color: #86EFAC;
+}
+
+.chart-exec-chip-warning {
+    color: #92400E;
+    background: #FEF3C7;
+    border-color: #FCD34D;
+}
+
+.chart-exec-chip-danger {
+    color: #991B1B;
+    background: #FEE2E2;
+    border-color: #FCA5A5;
+}
+
+.chart-exec-chip-neutral {
+    color: #334155;
+    background: #E2E8F0;
+    border-color: #CBD5E1;
+}
+
+.chart-exec-chip-info {
+    color: #0F6CBD;
+    background: #EAF3FF;
+    border-color: #BFDBFE;
 }
 
 /* ===== SECTION CARD ===== */
@@ -728,6 +806,67 @@ MESES_LABEL = {
     "FEVEREIRO.27": "Fev/27"
 }
 
+def default_previous_month_selection():
+    month_name_to_number = {
+        "JANEIRO": 1,
+        "FEVEREIRO": 2,
+        "MARCO": 3,
+        "ABRIL": 4,
+        "MAIO": 5,
+        "JUNHO": 6,
+        "JULHO": 7,
+        "AGOSTO": 8,
+        "SETEMBRO": 9,
+        "OUTUBRO": 10,
+        "NOVEMBRO": 11,
+        "DEZEMBRO": 12,
+    }
+
+    month_abbr = {
+        1: "Jan",
+        2: "Fev",
+        3: "Mar",
+        4: "Abr",
+        5: "Mai",
+        6: "Jun",
+        7: "Jul",
+        8: "Ago",
+        9: "Set",
+        10: "Out",
+        11: "Nov",
+        12: "Dez",
+    }
+
+    today = dt.datetime.now().date()
+    first_day_current_month = today.replace(day=1)
+    previous_month_date = first_day_current_month - timedelta(days=1)
+    previous_month_label = f"{month_abbr[previous_month_date.month]}/{str(previous_month_date.year)[-2:]}"
+
+    options = [MESES_LABEL[m] for m in MESES]
+    if previous_month_label in options:
+        return [previous_month_label]
+
+    available_dates = []
+    for month_key in MESES:
+        month_name, year_suffix = month_key.split(".")
+        month_number = month_name_to_number.get(normalize_text(month_name))
+        if month_number is None:
+            continue
+        year = 2000 + int(year_suffix)
+        available_dates.append((dt.date(year, month_number, 1), MESES_LABEL.get(month_key, month_key)))
+
+    if not available_dates:
+        return options
+
+    available_dates.sort(key=lambda x: x[0])
+    target_date = previous_month_date.replace(day=1)
+    candidates = [label for date_value, label in available_dates if date_value <= target_date]
+
+    if candidates:
+        return [candidates[-1]]
+
+    return [available_dates[0][1]]
+
 RISK_COLORS = {
     "NÃO URGENTE (AZUL)": "#1E3A8A",
     "POUCO URGENTE (VERDE)": "#16A34A",
@@ -738,9 +877,212 @@ RISK_COLORS = {
 }
 
 _plot_counter = 0
+
+
+def _strip_html_text(value):
+    if value is None:
+        return ""
+    text = str(value)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _get_plot_title_subtitle(fig):
+    title_obj = getattr(fig.layout, "title", None)
+    raw_title = getattr(title_obj, "text", None) if title_obj is not None else None
+    if not raw_title:
+        return "", ""
+
+    parts = str(raw_title).split("<br>", 1)
+    title = _strip_html_text(parts[0]) if parts else ""
+    subtitle = _strip_html_text(parts[1]) if len(parts) > 1 else ""
+    return title, subtitle
+
+
+def _to_number(value):
+    try:
+        if value is None or pd.isna(value):
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _is_inverse_indicator(indicator_hint):
+    text = normalize_text(indicator_hint) or ""
+    inverse_tokens = [
+        "TEMPO DE ESPERA",
+        "TEMPO MEDIO",
+        "TEMPO MÉDIO",
+        "TEMPO DE PERMANENCIA",
+        "TEMPO DE PERMANÊNCIA",
+        "OBITO",
+        "ÓBITO",
+        "ACIDENTE DE TRABALHO",
+        "ABSENTEISMO",
+        "ABSENTEÍSMO",
+        "TURNOVER",
+    ]
+    return any(token in text for token in inverse_tokens)
+
+
+def _status_threshold(indicator_hint, inverse_logic=False):
+    """Define limiar percentual de alerta por contexto do indicador."""
+    text = normalize_text(indicator_hint) or ""
+
+    if inverse_logic:
+        return 0.02  # indicadores de tempo/risco pedem maior sensibilidade
+
+    strict_tokens = [
+        "GASTO",
+        "FINANCEIRO",
+        "CUSTO",
+        "VALOR",
+        "DESPESA",
+    ]
+    if any(token in text for token in strict_tokens):
+        return 0.05
+
+    return 0.03
+
+
+def _chart_exec_status(fig, indicator_hint=""):
+    """Calcula um status executivo simples com base na tendência dos dois últimos pontos."""
+    inverse_logic = _is_inverse_indicator(indicator_hint)
+    threshold = _status_threshold(indicator_hint, inverse_logic=inverse_logic)
+
+    for trace in fig.data:
+        trace_name_obj = getattr(trace, "name", None)
+        trace_name = str(trace_name_obj).upper() if trace_name_obj is not None else ""
+        if "META" in trace_name:
+            continue
+
+        xs_raw = getattr(trace, "x", None)
+        ys_values = getattr(trace, "y", None)
+
+        if xs_raw is None or ys_values is None:
+            continue
+
+        try:
+            xs = list(xs_raw)
+            ys_raw = list(ys_values)
+        except Exception:
+            # Ignora traces que nao exponham x/y em formato iteravel.
+            continue
+
+        if not xs or not ys_raw:
+            continue
+
+        ys = [_to_number(v) for v in ys_raw]
+
+        points = [(x, y) for x, y in zip(xs, ys) if y is not None]
+        if len(points) < 2:
+            continue
+
+        labels = [str(x) for x, _ in points]
+        values = [y for _, y in points]
+
+        is_time_like = all(lbl in MESES_LABEL.values() for lbl in labels)
+        if not is_time_like:
+            continue
+
+        atual = values[-1]
+        anterior = values[-2]
+
+        if anterior == 0:
+            if atual == 0:
+                return {
+                    "label": "Sem movimentacao",
+                    "tone": "neutral",
+                    "detail": None,
+                }
+            return {
+                "label": "Entrada de valor",
+                "tone": "info",
+                "detail": None,
+            }
+
+        delta = (atual - anterior) / abs(anterior)
+        delta_txt = f"{delta * 100:+.1f}%".replace(".", ",")
+
+        if inverse_logic:
+            if delta <= -threshold:
+                return {
+                    "label": "Em melhora",
+                    "tone": "success",
+                    "detail": delta_txt,
+                }
+            if delta >= threshold:
+                return {
+                    "label": "Em piora",
+                    "tone": "danger",
+                    "detail": delta_txt,
+                }
+            return {
+                "label": "Estavel",
+                "tone": "warning",
+                "detail": delta_txt,
+            }
+
+        if delta >= threshold:
+            return {
+                "label": "Em alta",
+                "tone": "success",
+                "detail": delta_txt,
+            }
+        if delta <= -threshold:
+            return {
+                "label": "Em queda",
+                "tone": "danger",
+                "detail": delta_txt,
+            }
+        return {
+            "label": "Estavel",
+            "tone": "warning",
+            "detail": delta_txt,
+        }
+
+    return {
+        "label": "Consolidado",
+        "tone": "info",
+        "detail": None,
+    }
+
+
 def plot(fig, prefix="grafico"):
     global _plot_counter
     _plot_counter += 1
+
+    title, subtitle = _get_plot_title_subtitle(fig)
+    if title:
+        indicator_hint = f"{title} {subtitle}".strip()
+        status = _chart_exec_status(fig, indicator_hint=indicator_hint)
+        status_label = html.escape(status["label"])
+        status_detail = f" {html.escape(status['detail'])}" if status.get("detail") else ""
+        subtitle_text = subtitle if subtitle else "Leitura executiva do indicador selecionado"
+        subtitle_safe = html.escape(subtitle_text)
+        title_safe = html.escape(title)
+
+        st.markdown(
+            f"""
+            <div class="chart-exec-header">
+                <div class="chart-exec-row">
+                    <div>
+                        <div class="chart-exec-title">{title_safe}</div>
+                        <div class="chart-exec-subtitle">{subtitle_safe}</div>
+                    </div>
+                    <div class="chart-exec-chip chart-exec-chip-{status['tone']}">{status_label}{status_detail}</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        current_margin = getattr(getattr(fig.layout, "margin", None), "t", None)
+        new_margin_top = max(28, int(current_margin) - 44) if current_margin is not None else 34
+        fig.update_layout(title=None, margin=dict(t=new_margin_top))
+
     st.plotly_chart(fig, use_container_width=True, key=f"{prefix}_{_plot_counter}")
 
 def local_excel_path():
@@ -908,8 +1250,14 @@ def parse_sheet(ws, sheet_name):
     return df
 
 
+def _local_file_mtime():
+    """Retorna o timestamp de modificação do Excel local (para invalidar cache automaticamente)."""
+    p = local_excel_path()
+    return p.stat().st_mtime if p else 0
+
+
 @st.cache_data(show_spinner=False)
-def load_workbook_data(file_bytes=None):
+def load_workbook_data(file_bytes=None, _mtime=None):
     if file_bytes is None:
         path = local_excel_path()
         if not path:
@@ -945,7 +1293,7 @@ def load_workbook_data(file_bytes=None):
 
 
 @st.cache_data(show_spinner=False)
-def load_metas_data(file_bytes=None):
+def load_metas_data(file_bytes=None, _mtime=None):
     colunas_padrao = [
         "categoria",
         "categoria_norm",
@@ -1075,7 +1423,7 @@ def load_metas_data(file_bytes=None):
     return resumo[colunas_padrao].reset_index(drop=True)
 
 @st.cache_data(show_spinner=False)
-def load_financeiro_data(file_bytes=None):
+def load_financeiro_data(file_bytes=None, _mtime=None):
     colunas = [
         "grupo",
         "grupo_norm",
@@ -1181,14 +1529,17 @@ def financeiro_kpis(fin_df):
     total = float(work["valor_num"].sum())
 
     mensal = (
-        work.groupby(["mes", "mes_label"], observed=False)["valor_num"]
+        work.groupby(["mes", "mes_label"], observed=True)["valor_num"]
         .sum()
         .reset_index()
         .sort_values("mes")
     )
 
-    media_mensal = float(mensal["valor_num"].mean()) if not mensal.empty else 0.0
-    maior_mes = float(mensal["valor_num"].max()) if not mensal.empty else 0.0
+    # considera apenas meses com movimentação real (valor > 0)
+    mensal_com_dados = mensal[mensal["valor_num"] > 0]
+
+    media_mensal = float(mensal_com_dados["valor_num"].mean()) if not mensal_com_dados.empty else 0.0
+    maior_mes = float(mensal_com_dados["valor_num"].max()) if not mensal_com_dados.empty else 0.0
 
     fornecedores_ativos = int(
         work.groupby("fornecedor")["valor_num"].sum().gt(0).sum()
@@ -1228,21 +1579,22 @@ def render_financeiro_page(fin_df):
     )
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        card("Gasto total", format_currency_br(kpis["total"]), icon="💰", subtitle="Total no período")
+        top_kpi_card("Gasto total", format_currency_br(kpis["total"]), icon="💰", subtitle="▲ total no período", accent_color="#22C55E", subtitle_color="#16A34A")
     with c2:
-        card("Média mensal", format_currency_br(kpis["media_mensal"]), icon="📊", subtitle="Média dos meses filtrados")
+        top_kpi_card("Média mensal", format_currency_br(kpis["media_mensal"]), icon="📊", subtitle="▲ média dos meses filtrados", accent_color="#3B82F6", subtitle_color="#2563EB")
     with c3:
-        card("Maior mês", format_currency_br(kpis["maior_mes"]), icon="📈", subtitle="Pico de gasto mensal")
+        top_kpi_card("Maior mês", format_currency_br(kpis["maior_mes"]), icon="📈", subtitle="▲ pico de gasto mensal", accent_color="#F97316", subtitle_color="#EA580C")
     with c4:
-        card("Fornecedores ativos", format_int(kpis["fornecedores_ativos"]), icon="🏢", subtitle="Com lançamento no período")
+        top_kpi_card("Fornecedores ativos", format_int(kpis["fornecedores_ativos"]), icon="🏢", subtitle="▲ com lançamento no período", accent_color="#EF4444", subtitle_color="#DC2626")
     section_end()
 
     mensal = (
-        work.groupby(["mes", "mes_label"], observed=False)["valor_num"]
+        work.groupby(["mes", "mes_label"], observed=True)["valor_num"]
         .sum()
         .reset_index()
         .sort_values("mes")
     )
+    mensal = mensal[mensal["valor_num"] > 0]
 
     section_start(
         "Evolução mensal dos gastos",
@@ -1995,16 +2347,43 @@ def render_metas_page(data, metas_df):
     total_pct = percent_atingido(total_executado, total_meta)
     total_saldo_pct = ((total_executado - total_meta) / total_meta) * 100 if total_meta else None
 
+    # Regras visuais solicitadas para os KPIs de metas
+    if total_pct is not None and not pd.isna(total_pct) and total_pct > 99.99:
+        pct_subtitle = "▲ executado em relação à meta"
+        pct_subtitle_color = "#16A34A"
+        pct_accent_color = "#22C55E"
+    else:
+        pct_subtitle = "▲ executado em relação à meta"
+        pct_subtitle_color = "#EA580C"
+        pct_accent_color = "#F97316"
+
+    if total_saldo_pct is None or pd.isna(total_saldo_pct):
+        saldo_subtitle = "• sem base de comparação"
+        saldo_subtitle_color = "#64748B"
+        saldo_accent_color = "#94A3B8"
+    elif total_saldo_pct > 0:
+        saldo_subtitle = "▲ acima da meta"
+        saldo_subtitle_color = "#16A34A"
+        saldo_accent_color = "#22C55E"
+    elif total_saldo_pct < 0:
+        saldo_subtitle = "▼ abaixo da meta"
+        saldo_subtitle_color = "#DC2626"
+        saldo_accent_color = "#EF4444"
+    else:
+        saldo_subtitle = "• em linha com a meta"
+        saldo_subtitle_color = "#2563EB"
+        saldo_accent_color = "#3B82F6"
+
     section_start("Resumo geral das metas", "Comparativo consolidado entre executado e meta da aba Metas do Plano")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        card("Executado total", format_compact_number(total_executado), icon="📌", subtitle="Base disponível no período filtrado")
+        top_kpi_card("Executado total", format_compact_number(total_executado), icon="📌", subtitle="▲ base no período filtrado", accent_color="#22C55E", subtitle_color="#16A34A")
     with c2:
-        card("Meta total", format_compact_number(total_meta), icon="🎯", subtitle="Somatório das metas filtradas")
+        top_kpi_card("Meta total", format_compact_number(total_meta), icon="🎯", subtitle="▲ somatório das metas", accent_color="#3B82F6", subtitle_color="#2563EB")
     with c3:
-        card("% atingido", format_pct_br(total_pct), icon="📈", subtitle="Executado em relação à meta")
+        top_kpi_card("% atingido", format_pct_br(total_pct), icon="📈", subtitle=pct_subtitle, accent_color=pct_accent_color, subtitle_color=pct_subtitle_color)
     with c4:
-        card("Saldo percentual", format_pct_br(total_saldo_pct), icon="⚖️", subtitle="Acima ou abaixo da meta")
+        top_kpi_card("Saldo percentual", format_pct_br(total_saldo_pct), icon="⚖️", subtitle=saldo_subtitle, accent_color=saldo_accent_color, subtitle_color=saldo_subtitle_color)
     section_end()
 
     section_start("Painel por meta", "Cards executivos com executado, meta, percentual atingido e saldo")
@@ -2081,6 +2460,51 @@ def card(title, value, icon="📊", subtitle="Indicador consolidado"):
                 f'<div style="width: 42px; height: 42px; border-radius: 12px; background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%); display:flex; align-items:center; justify-content:center; font-size: 20px;">{icon}</div>'
             '</div>'
             f'<div style="font-size: 32px; font-weight: 800; color: #0F172A; line-height: 1; margin-top: 8px;">{value}</div>'
+        '</div>'
+    )
+
+    st.markdown(html, unsafe_allow_html=True)
+
+def top_kpi_card(
+    title,
+    value,
+    icon="📊",
+    subtitle="Indicador consolidado",
+    accent_color="#22C55E",
+    subtitle_color="#64748B"
+):
+    value = clean_card_value(value)
+
+    html = (
+        '<div style="'
+        'background: #F8FAFC;'
+        'border: 1px solid #E2E8F0;'
+        'border-top: 4px solid ' + accent_color + ';'
+        'border-radius: 16px;'
+        'padding: 14px 16px 12px 16px;'
+        'box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);'
+        'min-height: 148px;'
+        '">'
+            '<div style="'
+            'width: 36px;'
+            'height: 36px;'
+            'border-radius: 10px;'
+            'background: #EEF2FF;'
+            'display: flex;'
+            'align-items: center;'
+            'justify-content: center;'
+            'font-size: 18px;'
+            'margin-bottom: 10px;'
+            '">' + icon + '</div>'
+            '<div style="font-size: 14.4px; letter-spacing: 1.1px; text-transform: uppercase; color: #475569; font-weight: 700;">'
+            + title +
+            '</div>'
+            '<div style="font-size: 40px; font-weight: 800; color: #0F172A; line-height: 1.05; margin-top: 8px;">'
+            + value +
+            '</div>'
+            '<div style="font-size: 15px; color: ' + subtitle_color + '; margin-top: 6px; font-weight: 600;">'
+            + subtitle +
+            '</div>'
         '</div>'
     )
 
@@ -2270,6 +2694,197 @@ DEFAULT_CHART_COLORS = [
     SEMANTIC_COLORS["series_6"],
     SEMANTIC_COLORS["series_7"],
 ]
+
+def apply_visual_theme(theme_name):
+    themes = {
+        "Portal Clínico (Azul)": {
+            "palette": {
+                "primary": "#0F6CBD",
+                "primary_soft": "#93C5FD",
+                "success": "#16A34A",
+                "warning": "#F59E0B",
+                "danger": "#DC2626",
+                "neutral": "#64748B",
+                "realizado": "#0F6CBD",
+                "realizado_soft": "#93C5FD",
+                "media": "#38BDF8",
+                "meta": "#94A3B8",
+                "grid": "rgba(148,163,184,0.14)",
+                "axis": "#076BF7",
+                "text": "#CFD7E2",
+                "title": "#F6F7FB",
+                "plot_bg": "#071224",
+                "series": ["#0F6CBD", "#16A34A", "#F59E0B", "#DC2626", "#7C3AED", "#0891B2", "#64748B"],
+            },
+            "css": f"""
+            <style>
+            [data-testid="stAppViewContainer"] {{
+                background-image: linear-gradient(rgba(239, 248, 255, 0.72), rgba(239, 248, 255, 0.82)), url("data:image/png;base64,{BACKGROUND_BASE64}") !important;
+                background-size: cover !important;
+                background-position: center !important;
+                background-attachment: fixed !important;
+                background-color: #EEF7FC !important;
+            }}
+            section[data-testid="stSidebar"] {{
+                background: linear-gradient(180deg, #0F4C81 0%, #0B2E4E 100%) !important;
+            }}
+            section[data-testid="stSidebar"] * {{ color: #F8FAFC !important; }}
+            .hero-wrap {{ background: linear-gradient(135deg, #0F172A 0%, #12324A 50%, #0F6CBD 100%) !important; }}
+            div[data-testid="stPlotlyChart"] {{ background: #071224 !important; }}
+            </style>
+            """,
+        },
+        "Pro Analytics (Escuro)": {
+            "palette": {
+                "primary": "#00C2FF",
+                "primary_soft": "#67E8F9",
+                "success": "#00E5A0",
+                "warning": "#F59E0B",
+                "danger": "#EF4444",
+                "neutral": "#94A3B8",
+                "realizado": "#00C2FF",
+                "realizado_soft": "#67E8F9",
+                "media": "#22D3EE",
+                "meta": "#CBD5E1",
+                "grid": "rgba(148,163,184,0.18)",
+                "axis": "#60A5FA",
+                "text": "#E2E8F0",
+                "title": "#F8FAFC",
+                "plot_bg": "#0D1321",
+                "series": ["#00C2FF", "#00E5A0", "#F59E0B", "#EF4444", "#A78BFA", "#22D3EE", "#94A3B8"],
+            },
+            "css": """
+            <style>
+            [data-testid="stAppViewContainer"] {
+                background: radial-gradient(circle at 20% 0%, #16233A 0%, #0A0E1A 45%, #090D18 100%) !important;
+            }
+            [data-testid="stMain"] {
+                background: transparent !important;
+            }
+            section[data-testid="stSidebar"] {
+                background: linear-gradient(180deg, #0D1321 0%, #0A0E1A 100%) !important;
+                border-right: 1px solid rgba(255,255,255,0.08) !important;
+            }
+            section[data-testid="stSidebar"] * { color: #E2E8F0 !important; }
+            h1, h2, h3, p, label, .stMarkdown, .stCaption { color: #E2E8F0 !important; }
+            .hero-wrap {
+                background: linear-gradient(125deg, #0D1A2E 0%, #0F2340 55%, #0A66CC 100%) !important;
+                border: 1px solid rgba(0,194,255,0.22) !important;
+                box-shadow: 0 0 36px rgba(0,194,255,0.14) !important;
+            }
+            .hero-subtitle, .hero-chip { color: #E2E8F0 !important; }
+            div[data-testid="stMetric"] {
+                background: #0D1321 !important;
+                border: 1px solid rgba(255,255,255,0.08) !important;
+            }
+            details {
+                background: #0D1321 !important;
+                border: 1px solid rgba(255,255,255,0.10) !important;
+            }
+            div[data-testid="stPlotlyChart"] {
+                background: #0D1321 !important;
+                border: 1px solid rgba(255,255,255,0.08) !important;
+            }
+            </style>
+            """,
+        },
+        "Healthcare Clean (Verde)": {
+            "palette": {
+                "primary": "#0EA472",
+                "primary_soft": "#86EFAC",
+                "success": "#16A34A",
+                "warning": "#F59E0B",
+                "danger": "#DC2626",
+                "neutral": "#64748B",
+                "realizado": "#0EA472",
+                "realizado_soft": "#86EFAC",
+                "media": "#10B981",
+                "meta": "#94A3B8",
+                "grid": "rgba(148,163,184,0.20)",
+                "axis": "#0EA472",
+                "text": "#334155",
+                "title": "#0F172A",
+                "plot_bg": "#F8FBF9",
+                "series": ["#0EA472", "#3B82F6", "#16A34A", "#F59E0B", "#DC2626", "#14B8A6", "#64748B"],
+            },
+            "css": f"""
+            <style>
+            [data-testid="stAppViewContainer"] {{
+                background-image: linear-gradient(rgba(246, 252, 248, 0.94), rgba(246, 252, 248, 0.97)), url("data:image/png;base64,{BACKGROUND_BASE64}") !important;
+                background-size: cover !important;
+                background-position: center !important;
+                background-color: #F3FBF6 !important;
+            }}
+            section[data-testid="stSidebar"] {{
+                background: linear-gradient(180deg, #0B7A5A 0%, #065F46 100%) !important;
+            }}
+            section[data-testid="stSidebar"] * {{ color: #ECFDF5 !important; }}
+            .hero-wrap {{
+                background: linear-gradient(120deg, #065F46 0%, #0EA472 60%, #10B981 100%) !important;
+                box-shadow: 0 12px 30px rgba(6,95,70,0.22) !important;
+            }}
+            div[data-testid="stMetric"] {{
+                background: linear-gradient(180deg, #FFFFFF 0%, #F8FFFB 100%) !important;
+                border: 1px solid #DCFCE7 !important;
+            }}
+            details {{
+                background: #FFFFFF !important;
+                border: 1px solid #DCFCE7 !important;
+            }}
+            div[data-testid="stPlotlyChart"] {{
+                background: #F8FBF9 !important;
+                border: 1px solid #DCFCE7 !important;
+            }}
+            </style>
+            """,
+        },
+    }
+
+    selected = themes.get(theme_name, themes["Portal Clínico (Azul)"])
+    palette = selected["palette"]
+
+    SEMANTIC_COLORS.update({
+        "primary": palette["primary"],
+        "primary_soft": palette["primary_soft"],
+        "success": palette["success"],
+        "warning": palette["warning"],
+        "danger": palette["danger"],
+        "neutral": palette["neutral"],
+        "realizado": palette["realizado"],
+        "realizado_soft": palette["realizado_soft"],
+        "media": palette["media"],
+        "meta": palette["meta"],
+        "grid": palette["grid"],
+        "axis": palette["axis"],
+        "text": palette["text"],
+        "title": palette["title"],
+        "plot_bg": palette["plot_bg"],
+        "series_1": palette["series"][0],
+        "series_2": palette["series"][1],
+        "series_3": palette["series"][2],
+        "series_4": palette["series"][3],
+        "series_5": palette["series"][4],
+        "series_6": palette["series"][5],
+        "series_7": palette["series"][6],
+    })
+
+    APP_COLORS.update({
+        "primary": SEMANTIC_COLORS["primary"],
+        "primary_soft": SEMANTIC_COLORS["primary_soft"],
+        "secondary": SEMANTIC_COLORS["secondary"],
+        "success": SEMANTIC_COLORS["success"],
+        "warning": SEMANTIC_COLORS["warning"],
+        "danger": SEMANTIC_COLORS["danger"],
+        "neutral": SEMANTIC_COLORS["neutral"],
+        "grid": SEMANTIC_COLORS["grid"],
+        "axis": SEMANTIC_COLORS["axis"],
+        "text": SEMANTIC_COLORS["text"],
+        "title": SEMANTIC_COLORS["title"],
+        "plot_bg": SEMANTIC_COLORS["plot_bg"],
+    })
+
+    DEFAULT_CHART_COLORS[:] = palette["series"]
+    st.markdown(selected["css"], unsafe_allow_html=True)
 
 def semantic_color(name, default=None):
     if not name:
@@ -2751,11 +3366,13 @@ def render_upa_page(df, unidade):
             ])
         ]["valor_num"].sum()
 
-        card(
+        top_kpi_card(
             "Pacientes recepcionados",
             format_int(total_recep),
             icon="👥",
-            subtitle="Volume total no período"
+            subtitle="▲ volume total no período",
+            accent_color="#22C55E",
+            subtitle_color="#16A34A"
         )
 
     with c2:
@@ -2764,27 +3381,33 @@ def render_upa_page(df, unidade):
             exclude_series_norm=["META", "MÉDIA DIÁRIA", "MEDIA DIÁRIA", "MEDIA DIARIA", "TOTAL"]
         )
 
-        card(
+        top_kpi_card(
             "Atendimentos médicos",
             format_int(total_atend_med or 0),
             icon="🩺",
-            subtitle="Produção médica consolidada"
+            subtitle="▲ produção médica consolidada",
+            accent_color="#3B82F6",
+            subtitle_color="#2563EB"
         )
 
     with c3:
-        card(
+        top_kpi_card(
             "Óbitos",
             format_int(obitos["valor_num"].sum()),
             icon="⚠️",
-            subtitle="Ocorrências registradas"
+            subtitle="▼ ocorrências registradas",
+            accent_color="#EF4444",
+            subtitle_color="#DC2626"
         )
 
     with c4:
-        card(
+        top_kpi_card(
             "Exames internos",
             format_int(exames[~exames["serie_norm"].eq("TOTAL")]["valor_num"].sum()),
             icon="🧪",
-            subtitle="Procedimentos realizados"
+            subtitle="▲ procedimentos realizados",
+            accent_color="#F97316",
+            subtitle_color="#EA580C"
         )
     section_end()
 
@@ -3080,29 +3703,35 @@ def render_hmji(df):
             ])
         ]["valor_num"].sum()
 
-        card(
+        top_kpi_card(
             "Pacientes clínicos",
             format_int(total_clin),
             icon="🏥",
-            subtitle="Atendimentos no período"
+            subtitle="▲ atendimentos no período",
+            accent_color="#22C55E",
+            subtitle_color="#16A34A"
         )
 
     with c2:
         total_obitos = obitos["valor_num"].sum()
 
-        card(
+        top_kpi_card(
             "Óbitos",
             format_int(total_obitos),
             icon="⚠️",
-            subtitle="Apenas o total de óbitos"
+            subtitle="▼ apenas total de óbitos",
+            accent_color="#EF4444",
+            subtitle_color="#DC2626"
         )
 
     with c3:
-        card(
+        top_kpi_card(
             "Procedimentos cirúrgicos",
             format_int(cir["valor_num"].sum()),
             icon="🩹",
-            subtitle="CIRURGIAS GRANDES, BIÓPSIAS, VASECTOMIAS e PEQUENAS CIRURGIAS"
+            subtitle="▲ produção cirúrgica consolidada",
+            accent_color="#3B82F6",
+            subtitle_color="#2563EB"
         )
 
     col1, col2 = st.columns(2)
@@ -3339,57 +3968,17 @@ def render_rh_indicator_card(nome_indicador, panel_df):
     mes = info["mes"]
 
     icone = RH_ICONS.get(nome_indicador, "📊")
-    titulo = f"{icone} {nome_indicador}"
-
     valor_fmt = rh_format_value(nome_indicador, valor)
     mes_fmt = MESES_LABEL.get(mes, "-") if mes is not None else "-"
 
-    card_html = (
-        f'<div style="'
-        f'background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);'
-        f'border: 1px solid #E2E8F0;'
-        f'border-radius: 22px;'
-        f'padding: 18px 18px 16px 18px;'
-        f'box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);'
-        f'min-height: 220px;'
-        f'margin-bottom: 14px;'
-        f'display:flex;'
-        f'flex-direction:column;'
-        f'justify-content:space-between;'
-        f'">'
-
-        f'<div>'
-        f'  <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px;">'
-        f'      <div style="font-size:14px; font-weight:800; color:#0F172A; line-height:1.35;">'
-        f'          {titulo}'
-        f'      </div>'
-        f'      <div style="'
-        f'          background:#64748B;'
-        f'          color:#FFFFFF;'
-        f'          font-size:11px;'
-        f'          font-weight:700;'
-        f'          padding:6px 10px;'
-        f'          border-radius:999px;'
-        f'          white-space:nowrap;'
-        f'      ">'
-        f'          Sem meta'
-        f'      </div>'
-        f'  </div>'
-
-        f'  <div style="font-size:12px; color:#64748B; margin-bottom:12px;">Referência: {mes_fmt}</div>'
-
-        f'  <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:16px; padding:14px 12px;">'
-        f'      <div style="font-size:11px; color:#64748B; font-weight:700; text-transform:uppercase; margin-bottom:6px;">Valor atual</div>'
-        f'      <div style="font-size:30px; font-weight:800; color:#0F172A; line-height:1;">{valor_fmt}</div>'
-        f'  </div>'
-        f'</div>'
-
-        f'<div style="margin-top:14px; font-size:12px; color:#94A3B8;">Indicador mensal consolidado</div>'
-
-        f'</div>'
+    top_kpi_card(
+        title=nome_indicador,
+        value=valor_fmt,
+        icon=icone,
+        subtitle=f"Ref: {mes_fmt}",
+        accent_color="#0F6CBD",
+        subtitle_color="#64748B",
     )
-
-    st.markdown(card_html, unsafe_allow_html=True)
 
 def render_rh_page(df):
     unidade = "RH"
@@ -3430,29 +4019,281 @@ def render_rh_page(df):
 
     section_end()
 
-st.markdown("""
-<h1 style="margin-bottom:0;">
-<p style="margin-top:0; color:#64748B; font-size:16px;">
-</p>
-""", unsafe_allow_html=True)
-# ===== BOTÃO PROFISSIONAL DE UPLOAD =====
+st.sidebar.markdown(
+    f"""
+    <style>
+    section[data-testid="stSidebar"] {{
+        min-width: 260px !important;
+        max-width: 260px !important;
+    }}
+    section[data-testid="stSidebar"] > div:first-child {{
+        padding-top: 0.65rem;
+    }}
+    section[data-testid="stSidebar"] div.stButton > button {{
+        justify-content: flex-start;
+        border-radius: 13px !important;
+        font-size: 15px;
+        font-weight: 500;
+        letter-spacing: 0.1px;
+        padding: 8px 11px !important;
+        line-height: 1.25;
+        border: 1px solid transparent !important;
+        margin-bottom: 3px;
+        min-height: 42px !important;
+    }}
+    section[data-testid="stSidebar"] button[id*="menu_unidades_"] {{
+        min-height: 47px !important;
+        padding-top: 10px !important;
+        padding-bottom: 10px !important;
+        font-weight: 600;
+    }}
+    section[data-testid="stSidebar"] button[id*="menu_basicas_"],
+    section[data-testid="stSidebar"] button[id*="menu_administrativo_"] {{
+        min-height: 40px !important;
+        padding-top: 7px !important;
+        padding-bottom: 7px !important;
+    }}
+    section[data-testid="stSidebar"] div.stButton > button[kind="secondary"] {{
+        background: transparent !important;
+        color: #334155 !important;
+    }}
+    section[data-testid="stSidebar"] div.stButton > button[kind="secondary"]:hover {{
+        background: #F1F5F9 !important;
+        color: #0F172A !important;
+        border: 1px solid #E2E8F0 !important;
+    }}
+    section[data-testid="stSidebar"] div.stButton > button[kind="primary"] {{
+        background: linear-gradient(90deg, #D2F1E1 0%, #B6E6CC 100%) !important;
+        color: #055E45 !important;
+        border: 1px solid #63D39B !important;
+        box-shadow: none !important;
+        font-weight: 700;
+    }}
+    .sidebar-brand {{
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 2px 11px 2px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.20);
+        margin-bottom: 7px;
+    }}
+    .sidebar-brand-logo {{
+        width: 72px;
+        height: 72px;
+        border-radius: 0;
+        object-fit: contain;
+        display: block;
+    }}
+    .sidebar-brand-title {{
+        font-size: 18px;
+        font-weight: 800;
+        line-height: 1.1;
+        color: #F8FAFC;
+    }}
+    .sidebar-brand-sub {{
+        font-size: 10px;
+        color: rgba(226,232,240,0.75);
+        margin-top: 1px;
+    }}
+    .sidebar-group-label {{
+        font-size: 18px;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        font-weight: 900;
+        color: #94A3B8;
+        margin: 11px 0 5px 0;
+    }}
+    .sidebar-footer-card {{
+        margin-top: 10px;
+        background: linear-gradient(135deg, #0E7A5D 0%, #065F46 100%);
+        border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.12);
+        padding: 10px 12px;
+    }}
+    .sidebar-footer-card .footer-title {{
+        color: #CFFAFE;
+        font-size: 11px;
+        font-weight: 600;
+        margin-bottom: 2px;
+    }}
+    .sidebar-footer-card .footer-source {{
+        color: #FFFFFF;
+        font-size: 15px;
+        font-weight: 700;
+    }}
+    </style>
+    <div class="sidebar-brand">
+        <img class="sidebar-brand-logo" src="data:image/png;base64,{LOGO_SIDEBAR_BASE64}" alt="Patris" />
+        <div>
+            <div class="sidebar-brand-title">Patris</div>
+            <div class="sidebar-brand-sub">Gestão Municipal · Luziânia</div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+usuario_logado = st.session_state.get("usuario_logado")
+
+theme_by_user = {
+    "admin": "Healthcare Clean (Verde)",
+    "vittor": "Healthcare Clean (Verde)",
+    "wendel": "Healthcare Clean (Verde)",
+    "guilherme": "Healthcare Clean (Verde)",
+    "denis": "Healthcare Clean (Verde)",
+    "prefeitura": "Healthcare Clean (Verde)",
+}
+
+default_theme_for_user = theme_by_user.get(usuario_logado, "Portal Clínico (Azul)")
+
+if "visual_theme" not in st.session_state:
+    st.session_state["visual_theme"] = default_theme_for_user
+
+if st.session_state.get("visual_theme_user") != usuario_logado:
+    st.session_state["visual_theme"] = default_theme_for_user
+    st.session_state["visual_theme_user"] = usuario_logado
+
+visual_theme = st.sidebar.selectbox(
+    "Visual do portal",
+    [
+        "Portal Clínico (Azul)",
+        "Pro Analytics (Escuro)",
+        "Healthcare Clean (Verde)",
+    ],
+    index=[
+        "Portal Clínico (Azul)",
+        "Pro Analytics (Escuro)",
+        "Healthcare Clean (Verde)",
+    ].index(st.session_state.get("visual_theme", "Portal Clínico (Azul)")),
+)
+
+st.session_state["visual_theme"] = visual_theme
+apply_visual_theme(visual_theme)
+
+st.markdown("### Aparência")
+theme_col1, theme_col2, theme_col3 = st.columns(3)
+
+if theme_col1.button("Portal Clínico", use_container_width=True):
+    st.session_state["visual_theme"] = "Portal Clínico (Azul)"
+if theme_col2.button("Pro Analytics", use_container_width=True):
+    st.session_state["visual_theme"] = "Pro Analytics (Escuro)"
+if theme_col3.button("Healthcare Clean", use_container_width=True):
+    st.session_state["visual_theme"] = "Healthcare Clean (Verde)"
+
+if st.session_state["visual_theme"] != visual_theme:
+    apply_visual_theme(st.session_state["visual_theme"])
+
+paginas_unidades = [
+    "UPA Luziânia",
+    "UPA Jardim Ingá",
+    "HMJI",
+]
+
+paginas_basicas = [
+    "Atenção Primária",
+    "Atenção Secundária",
+    "Saúde Mental",
+]
+
+paginas_administrativo = [
+    "Metas do Plano",
+    "Gestão de Pessoas",
+    "Financeiro",
+]
+
+todas_paginas = paginas_unidades + paginas_basicas + paginas_administrativo
+
+pagina_icons = {
+    "UPA Luziânia": "🚑",
+    "UPA Jardim Ingá": "🚑",
+    "HMJI": "🏥",
+    "Atenção Secundária": "🩺",
+    "Saúde Mental": "🧠",
+    "Atenção Primária": "💊",
+    "Gestão de Pessoas": "👥",
+    "Financeiro": "💰",
+    "Metas do Plano": "📊",
+}
+
+paginas_disponiveis = [
+    p for p in todas_paginas
+    if usuario_pode_ver_pagina(usuario_logado, p)
+]
+
+if not paginas_disponiveis:
+    st.error("Este usuário não possui acesso a nenhuma página.")
+    st.stop()
+
+if "pagina_selecionada" not in st.session_state or st.session_state["pagina_selecionada"] not in paginas_disponiveis:
+    st.session_state["pagina_selecionada"] = paginas_disponiveis[0]
+
+st.sidebar.markdown('<div class="sidebar-group-label">Unidades</div>', unsafe_allow_html=True)
+for page in paginas_unidades:
+    if page not in paginas_disponiveis:
+        continue
+    active = st.session_state["pagina_selecionada"] == page
+    if st.sidebar.button(
+        f"{pagina_icons.get(page, '📌')}  {page}",
+        key=f"menu_unidades_{normalize_text(page)}",
+        use_container_width=True,
+        type="primary" if active else "secondary"
+    ):
+        st.session_state["pagina_selecionada"] = page
+
+st.sidebar.markdown('<div class="sidebar-group-label">Unidades basicas</div>', unsafe_allow_html=True)
+for page in paginas_basicas:
+    if page not in paginas_disponiveis:
+        continue
+    active = st.session_state["pagina_selecionada"] == page
+    if st.sidebar.button(
+        f"{pagina_icons.get(page, '📌')}  {page}",
+        key=f"menu_basicas_{normalize_text(page)}",
+        use_container_width=True,
+        type="primary" if active else "secondary"
+    ):
+        st.session_state["pagina_selecionada"] = page
+
+st.sidebar.markdown('<div class="sidebar-group-label">Administrativo</div>', unsafe_allow_html=True)
+for page in paginas_administrativo:
+    if page not in paginas_disponiveis:
+        continue
+    active = st.session_state["pagina_selecionada"] == page
+    if st.sidebar.button(
+        f"{pagina_icons.get(page, '📌')}  {page}",
+        key=f"menu_administrativo_{normalize_text(page)}",
+        use_container_width=True,
+        type="primary" if active else "secondary"
+    ):
+        st.session_state["pagina_selecionada"] = page
+
+pagina = st.session_state["pagina_selecionada"]
+
+st.sidebar.markdown("## Filtros")
+default_periodo = default_previous_month_selection()
+if "meses_selecionados" not in st.session_state:
+    st.session_state["meses_selecionados"] = default_periodo
+
+meses_selecionados = st.sidebar.multiselect(
+    "Período",
+    [MESES_LABEL[m] for m in MESES],
+    default=default_periodo,
+    key="meses_selecionados"
+)
 
 st.sidebar.markdown("### Atualizar base")
+upload_col1, upload_col2 = st.sidebar.columns([1, 1])
 
-col1, col2 = st.sidebar.columns([1,1])
+with upload_col1:
+    abrir_upload = st.button("📁 Atualizar", use_container_width=True, key="footer_upload_open")
 
-with col1:
-    abrir_upload = st.button("📂 Atualizar", use_container_width=True)
-
-with col2:
-    limpar_upload = st.button("✖", use_container_width=True)
+with upload_col2:
+    limpar_upload = st.button("✖", use_container_width=True, key="footer_upload_clear")
 
 if limpar_upload:
     st.session_state.pop("uploaded_file", None)
     st.rerun()
 
 uploaded = None
-
 if abrir_upload:
     uploaded = st.sidebar.file_uploader(
         "Selecionar arquivo",
@@ -3462,17 +4303,19 @@ if abrir_upload:
 else:
     uploaded = st.session_state.get("uploaded_file", None)
 
-# salva na sessão
 if uploaded is not None:
     st.session_state["uploaded_file"] = uploaded
+
 if "uploaded_file" in st.session_state:
-    st.sidebar.success("Base atualizada")
+    st.sidebar.caption("Base atualizada")
 else:
     st.sidebar.caption("Usando base local")
+
 file_bytes = uploaded.getvalue() if uploaded else None
-data, source_name = load_workbook_data(file_bytes) if uploaded else load_workbook_data(None)
-metas_data = load_metas_data(file_bytes) if uploaded else load_metas_data(None)
-financeiro_data = load_financeiro_data(file_bytes) if uploaded else load_financeiro_data(None)
+_mtime = _local_file_mtime()
+data, source_name = load_workbook_data(file_bytes) if uploaded else load_workbook_data(None, _mtime=_mtime)
+metas_data = load_metas_data(file_bytes) if uploaded else load_metas_data(None, _mtime=_mtime)
+financeiro_data = load_financeiro_data(file_bytes) if uploaded else load_financeiro_data(None, _mtime=_mtime)
 
 if data.empty:
     base = Path(__file__).parent
@@ -3484,42 +4327,14 @@ if data.empty:
         st.info("Nenhum arquivo Excel foi encontrado na mesma pasta do app.")
     st.stop()
 
-st.sidebar.success(f"Fonte: {source_name}")
-st.sidebar.markdown("## Navegação")
-
-usuario_logado = st.session_state.get("usuario_logado")
-
-todas_paginas = [
-    "UPA Luziânia",
-    "UPA Jardim Ingá",
-    "HMJI",
-    "Atenção Secundária",
-    "Saúde Mental",
-    "Atenção Primária",
-    "Gestão de Pessoas",
-    "Financeiro",
-    "Metas do Plano"
-]
-
-paginas_disponiveis = [
-    p for p in todas_paginas
-    if usuario_pode_ver_pagina(usuario_logado, p)
-]
-
-if not paginas_disponiveis:
-    st.error("Este usuário não possui acesso a nenhuma página.")
-    st.stop()
-
-pagina = st.sidebar.radio(
-    "Selecione a página",
-    paginas_disponiveis
-)
-
-st.sidebar.markdown("## Filtros")
-meses_selecionados = st.sidebar.multiselect(
-    "Período",
-    [MESES_LABEL[m] for m in MESES],
-    default=[MESES_LABEL[m] for m in MESES]
+st.sidebar.markdown(
+    f"""
+    <div class="sidebar-footer-card">
+        <div class="footer-title">Fonte:</div>
+        <div class="footer-source">{source_name}</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 if "mes_label" in metas_data.columns:

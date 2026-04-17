@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Preview Opção 2 – Dark Pro Analytics</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'Segoe UI', Inter, Arial, sans-serif; background:#0A0E1A; display:flex; height:100vh; overflow:hidden; color:#E2E8F0; }
+
+  /* ── SIDEBAR ── */
+  .sidebar {
+    width: 230px; min-width: 230px;
+    background: #0D1321;
+    display: flex; flex-direction: column;
+    border-right: 1px solid rgba(255,255,255,0.05);
+  }
+  .sidebar-logo {
+    padding: 18px 16px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .logo-icon {
+    width: 38px; height: 38px; border-radius: 10px;
+    background: linear-gradient(135deg, #00C2FF, #0066CC);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; box-shadow: 0 0 18px rgba(0,194,255,0.45);
+  }
+  .logo-text .title { font-size: 13px; font-weight: 700; color: #F1F5F9; }
+  .logo-text .sub { font-size: 10px; color: rgba(255,255,255,0.30); margin-top: 1px; }
+
+  .section-label {
+    font-size: 9px; font-weight: 700; color: rgba(255,255,255,0.25);
+    letter-spacing: 1.4px; text-transform: uppercase;
+    padding: 14px 16px 5px;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 14px; cursor: pointer; transition: all 0.15s;
+    color: rgba(255,255,255,0.45); font-size: 12.5px; font-weight: 500;
+    border-left: 2px solid transparent;
+  }
+  .nav-item:hover { background: rgba(255,255,255,0.04); color: #CBD5E1; }
+  .nav-item.active {
+    color: #00C2FF; font-weight: 700;
+    background: rgba(0,194,255,0.07);
+    border-left-color: #00C2FF;
+  }
+  .nav-item .icon { font-size: 14px; }
+
+  .sidebar-bottom {
+    margin-top: auto;
+    padding: 14px 16px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+  }
+  .filter-label { font-size: 9px; font-weight: 700; color: rgba(255,255,255,0.25); letter-spacing: 1.2px; text-transform: uppercase; margin-bottom: 8px; }
+  .filter-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 14px; }
+  .chip {
+    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 20px; padding: 3px 9px;
+    font-size: 10.5px; color: rgba(255,255,255,0.50); cursor: pointer;
+  }
+  .chip.sel { background: rgba(0,194,255,0.15); border-color: rgba(0,194,255,0.40); color: #00C2FF; }
+
+  .user-row { display: flex; align-items: center; gap: 9px; }
+  .avatar { width: 30px; height: 30px; border-radius: 50%; background: linear-gradient(135deg, #00C2FF, #0066CC); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; color:#fff; }
+  .u-name { font-size: 12px; font-weight: 600; color: #E2E8F0; }
+  .u-role { font-size: 10px; color: rgba(255,255,255,0.30); }
+
+  /* ── MAIN ── */
+  .main { flex:1; overflow-y: auto; padding: 18px 20px; background: #0A0E1A; }
+
+  /* HERO */
+  .hero {
+    background: linear-gradient(120deg, #0D1A2E 0%, #0F2340 50%, #091629 100%);
+    border: 1px solid rgba(0,194,255,0.15);
+    border-radius: 18px; padding: 18px 22px;
+    margin-bottom: 18px;
+    box-shadow: 0 0 40px rgba(0,194,255,0.08), inset 0 1px 0 rgba(255,255,255,0.04);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .hero-badge {
+    background: rgba(0,194,255,0.12); border: 1px solid rgba(0,194,255,0.25);
+    border-radius: 20px; padding: 3px 12px; font-size: 10.5px;
+    color: #00C2FF; font-weight: 600; display: inline-flex; align-items: center; gap: 5px;
+    margin-bottom: 8px;
+  }
+  .hero h1 { color: #F1F5F9; font-size: 20px; font-weight: 800; letter-spacing: -0.5px; }
+  .hero .sub { color: rgba(255,255,255,0.40); font-size: 12px; margin-top: 3px; }
+  .hero-stats { display: flex; gap: 10px; }
+  .hstat {
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 12px; padding: 10px 14px; text-align: center;
+  }
+  .hstat .v { color: #00C2FF; font-size: 20px; font-weight: 800; text-shadow: 0 0 12px rgba(0,194,255,0.5); }
+  .hstat .l { color: rgba(255,255,255,0.35); font-size: 10px; margin-top: 2px; }
+
+  /* KPI */
+  .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .kpi {
+    background: #0D1321;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 16px; padding: 16px;
+    position: relative; overflow: hidden;
+    transition: transform 0.2s;
+  }
+  .kpi:hover { transform: translateY(-2px); border-color: rgba(0,194,255,0.20); }
+  .kpi-glow { position: absolute; top:-20px; right:-20px; width:80px; height:80px; border-radius: 50%; opacity: 0.08; }
+  .kpi.c1 .kpi-glow { background: #00C2FF; }
+  .kpi.c2 .kpi-glow { background: #00E5A0; }
+  .kpi.c3 .kpi-glow { background: #F59E0B; }
+  .kpi.c4 .kpi-glow { background: #EF4444; }
+  .kpi .lbl { font-size: 10px; font-weight: 700; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }
+  .kpi .val { font-size: 26px; font-weight: 800; letter-spacing: -0.8px; }
+  .kpi.c1 .val { color: #00C2FF; }
+  .kpi.c2 .val { color: #00E5A0; }
+  .kpi.c3 .val { color: #F59E0B; }
+  .kpi.c4 .val { color: #EF4444; }
+  .kpi .trend { font-size: 11px; color: rgba(255,255,255,0.30); margin-top: 5px; }
+  .kpi .trend .up { color: #00E5A0; }
+  .kpi .trend .dn { color: #EF4444; }
+
+  /* CHARTS */
+  .chart-row { display: grid; grid-template-columns: 3fr 2fr; gap: 14px; margin-bottom: 14px; }
+  .ccard {
+    background: #0D1321; border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 18px; padding: 18px 20px;
+  }
+  .ccard .ttl { font-size: 13px; font-weight: 700; color: #E2E8F0; }
+  .ccard .sub { font-size: 11px; color: rgba(255,255,255,0.25); margin-bottom: 14px; margin-top: 2px; }
+  .chart-area {
+    background: rgba(255,255,255,0.02); border-radius: 10px;
+    height: 160px; display: flex; align-items: flex-end;
+    padding: 0 12px 0; gap: 5px; position: relative; overflow: hidden;
+  }
+  .bar { border-radius: 4px 4px 0 0; flex:1; min-width: 14px; position: relative; }
+  .bar::after { content: ''; position: absolute; top:0; left:0; right:0; bottom:0; border-radius: 4px 4px 0 0; background: linear-gradient(180deg, rgba(255,255,255,0.15) 0%, transparent 60%); }
+
+  .grid-line { position: absolute; left:0; right:0; border-top: 1px solid rgba(255,255,255,0.04); }
+
+  .donut-area { display:flex; align-items:center; justify-content:center; height:160px; }
+
+  /* BOTTOM TABLE */
+  .tcard {
+    background: #0D1321; border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 18px; padding: 18px 20px;
+  }
+  .thead-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .ttitle { font-size: 13px; font-weight: 700; color: #E2E8F0; }
+  .tbadge { background: rgba(0,194,255,0.12); border: 1px solid rgba(0,194,255,0.25); border-radius: 20px; padding: 2px 10px; font-size: 10.5px; color: #00C2FF; font-weight: 700; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { color: rgba(255,255,255,0.30); font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); text-align: left; }
+  td { padding: 9px 10px; border-bottom: 1px solid rgba(255,255,255,0.03); color: rgba(255,255,255,0.65); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); color: #E2E8F0; }
+  .dp { border-radius: 20px; padding: 2px 9px; font-size: 10.5px; font-weight: 700; display: inline-block; }
+  .dp.g { background: rgba(0,229,160,0.12); color: #00E5A0; border: 1px solid rgba(0,229,160,0.25); }
+  .dp.y { background: rgba(245,158,11,0.12); color: #F59E0B; border: 1px solid rgba(245,158,11,0.25); }
+  .dp.r { background: rgba(239,68,68,0.12); color: #F87171; border: 1px solid rgba(239,68,68,0.25); }
+
+  .option-badge { position:fixed; top:12px; right:14px; background:linear-gradient(135deg, #00C2FF, #0066CC); color:#fff; border-radius:20px; padding:5px 14px; font-size:11px; font-weight:700; z-index:999; box-shadow:0 4px 14px rgba(0,102,204,0.5); }
+  .watermark { text-align:center; font-size:10px; color:rgba(255,255,255,0.18); padding:10px 0; }
+</style>
+</head>
+<body>
+<div class="option-badge">Opção 2 — Dark Pro Analytics</div>
+
+<!-- SIDEBAR -->
+<div class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-icon">🏥</div>
+    <div class="logo-text">
+      <div class="title">Patris Saúde</div>
+      <div class="sub">Gestão Municipal</div>
+    </div>
+  </div>
+
+  <div class="section-label">Unidades</div>
+  <div class="nav-item active"><span class="icon">🏠</span> Visão Geral</div>
+  <div class="nav-item"><span class="icon">🚑</span> UPA Luziânia</div>
+  <div class="nav-item"><span class="icon">🚑</span> UPA Jardim Ingá</div>
+  <div class="nav-item"><span class="icon">🏨</span> HMJI</div>
+  <div class="nav-item"><span class="icon">💊</span> Atenção Primária</div>
+  <div class="nav-item"><span class="icon">🧠</span> Saúde Mental</div>
+  <div class="nav-item"><span class="icon">📊</span> Metas do Plano</div>
+  <div class="nav-item"><span class="icon">👥</span> Gestão de Pessoas</div>
+
+  <div class="sidebar-bottom">
+    <div class="filter-label">Período</div>
+    <div class="filter-chips">
+      <div class="chip sel">Mar/26</div>
+      <div class="chip sel">Abr/26</div>
+      <div class="chip">Mai/26</div>
+      <div class="chip">Jun/26</div>
+    </div>
+    <div class="user-row">
+      <div class="avatar">A</div>
+      <div>
+        <div class="u-name">Admin</div>
+        <div class="u-role">Acesso total</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+
+  <div class="hero">
+    <div>
+      <div class="hero-badge">⚡ Painel em tempo real</div>
+      <h1>UPA Luziânia</h1>
+      <div class="sub">Indicadores operacionais · Mar/26 – Abr/26</div>
+    </div>
+    <div class="hero-stats">
+      <div class="hstat"><div class="v">4.821</div><div class="l">Atendimentos</div></div>
+      <div class="hstat"><div class="v">97,3%</div><div class="l">Ocupação</div></div>
+      <div class="hstat"><div class="v">14</div><div class="l">Dias</div></div>
+    </div>
+  </div>
+
+  <div class="kpi-row">
+    <div class="kpi c1"><div class="kpi-glow"></div>
+      <div class="lbl">Atendimentos</div>
+      <div class="val">4.821</div>
+      <div class="trend"><span class="up">▲ 8,4%</span> vs anterior</div>
+    </div>
+    <div class="kpi c2"><div class="kpi-glow"></div>
+      <div class="lbl">Taxa resolução</div>
+      <div class="val">84,2%</div>
+      <div class="trend"><span class="up">▲ 2,1%</span> meta atingida</div>
+    </div>
+    <div class="kpi c3"><div class="kpi-glow"></div>
+      <div class="lbl">T. espera médio</div>
+      <div class="val">01:24</div>
+      <div class="trend"><span class="dn">▼ Meta: 01:00h</span></div>
+    </div>
+    <div class="kpi c4"><div class="kpi-glow"></div>
+      <div class="lbl">Óbitos</div>
+      <div class="val">12</div>
+      <div class="trend"><span class="up">▼ 3</span> vs período anterior</div>
+    </div>
+  </div>
+
+  <div class="chart-row">
+    <div class="ccard">
+      <div class="ttl">Atendimentos por Classificação de Risco</div>
+      <div class="sub">Distribuição mensal por urgência</div>
+      <div class="chart-area">
+        <div class="grid-line" style="bottom:33%;"></div>
+        <div class="grid-line" style="bottom:66%;"></div>
+        <div class="bar" style="height:62%; background:linear-gradient(180deg,#1E3A8A,#1E3A8A88);"></div>
+        <div class="bar" style="height:44%; background:linear-gradient(180deg,#1E3A8A,#1E3A8A88);"></div>
+        <div class="bar" style="height:78%; background:linear-gradient(180deg,#16A34A,#16A34A88);"></div>
+        <div class="bar" style="height:55%; background:linear-gradient(180deg,#16A34A,#16A34A88);"></div>
+        <div class="bar" style="height:38%; background:linear-gradient(180deg,#EAB308,#EAB30888);"></div>
+        <div class="bar" style="height:48%; background:linear-gradient(180deg,#EAB308,#EAB30888);"></div>
+        <div class="bar" style="height:28%; background:linear-gradient(180deg,#F97316,#F9731688);"></div>
+        <div class="bar" style="height:18%; background:linear-gradient(180deg,#DC2626,#DC262688);"></div>
+      </div>
+    </div>
+    <div class="ccard">
+      <div class="ttl">Origem dos Pacientes</div>
+      <div class="sub">Cidade vs outras</div>
+      <div class="donut-area">
+        <svg viewBox="0 0 120 120" width="130" height="130">
+          <circle cx="60" cy="60" r="48" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="18"/>
+          <circle cx="60" cy="60" r="48" fill="none" stroke="#00C2FF" stroke-width="18"
+            stroke-dasharray="181 121" stroke-dashoffset="0" transform="rotate(-90 60 60)"/>
+          <circle cx="60" cy="60" r="48" fill="none" stroke="#00E5A0" stroke-width="18"
+            stroke-dasharray="60 242" stroke-dashoffset="-181" transform="rotate(-90 60 60)"/>
+          <text x="60" y="63" text-anchor="middle" font-size="14" font-weight="800" fill="#00C2FF">60%</text>
+          <text x="60" y="75" text-anchor="middle" font-size="8" fill="rgba(255,255,255,0.35)">Cidade</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <div class="tcard">
+    <div class="thead-row">
+      <div class="ttitle">Indicadores por Painel</div>
+      <div class="tbadge">Abr/26</div>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Indicador</th><th>Realizado</th><th>Meta</th><th>% Atingimento</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Atendimentos totais</td><td>4.821</td><td>4.500</td><td>107%</td><td><span class="dp g">Acima da meta</span></td></tr>
+        <tr><td>Tempo médio de espera</td><td>01:24h</td><td>01:00h</td><td>71%</td><td><span class="dp r">Abaixo da meta</span></td></tr>
+        <tr><td>Taxa de resolução</td><td>84,2%</td><td>82%</td><td>103%</td><td><span class="dp g">Acima da meta</span></td></tr>
+        <tr><td>Pacientes por médico/dia</td><td>38</td><td>40</td><td>95%</td><td><span class="dp y">Próximo da meta</span></td></tr>
+        <tr><td>Óbitos</td><td>12</td><td>10</td><td>83%</td><td><span class="dp y">Próximo da meta</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="watermark">Painel de Gestão Patris · Luziânia · Preview Visual — Opção 2: Dark Pro Analytics</div>
+</div>
+</body>
+</html>
