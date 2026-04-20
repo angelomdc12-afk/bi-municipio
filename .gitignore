@@ -1,0 +1,6 @@
+.streamlit/secrets.toml
+PowerBI/logs/
+PowerBI/__pycache__/
+*.pyc
+.git_last_commit.txt
+.git_status_check.txt

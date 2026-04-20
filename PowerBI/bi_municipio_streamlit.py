@@ -11,18 +11,15 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-    
-USUARIOS_APP = {
-    "admin": "36315515",
-    "vittor": "patris2026",
-    "wendel": "inovar2026",
-    "guilherme": "patris2026",
-    "denis": "inovar2026",
-    "prefeitura": "pre2026",    
-}
+from auth_utils import load_auth_users_from_secrets, load_permissions_from_secrets, verify_password
+from audit_utils import append_audit_event, read_audit_events
+from style_utils import apply_global_styles
+
+
+USUARIOS_APP = load_auth_users_from_secrets()
 TEMPO_SESSAO_HORAS = 8
 
-PERMISSOES = {
+PERMISSOES_PADRAO = {
     "admin": ["*"],
     "vittor": ["*"],
     "wendel": ["*"],
@@ -38,6 +35,8 @@ PERMISSOES = {
     "Metas do Plano"],
 }
 
+PERMISSOES = load_permissions_from_secrets(PERMISSOES_PADRAO)
+
 def render_login():
     st.markdown("""
     <style>
@@ -45,242 +44,27 @@ def render_login():
         max-width: 420px;
         margin: 80px auto;
         padding: 32px 28px;
-        background: white;
+        background: #FFFFFF;
         border-radius: 18px;
         box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
         border: 1px solid #E5E7EB;
     }
-        .login-title {
-            text-align: center;
-            font-size: 28px;
-            font-weight: 800;
-            color: #0F172A;
-            margin-bottom: 8px;
-        }
-        .login-subtitle {
-            text-align: center;
-            font-size: 14px;
-            color: #64748B;
-            margin-bottom: 24px;
-        }
-/* ===== FILTRO DE PERÍODO / MULTISELECT ===== */
-
-/* caixa externa do multiselect */
-div[data-testid="stPlotlyChart"] {
-    background: #071224;
-    border: none;
-    border-radius: 22px;
-    padding: 0.35rem 0.35rem 0.15rem 0.35rem;
-    box-shadow: none;
-}
-                
-div[data-testid="stPlotlyChart"] > div {
-    border: none !important;
-    box-shadow: none !important;
-    background: transparent !important;
-}                
-
-/* hover */
-section[data-testid="stSidebar"] .stMultiSelect > div > div:hover {
-    border-color: rgba(255,255,255,0.18) !important;
-    background: rgba(255,255,255,0.08) !important;
-}
-
-/* foco */
-section[data-testid="stSidebar"] .stMultiSelect > div > div:focus-within {
-    border-color: #7CC0F2 !important;
-    box-shadow: 0 0 0 1px rgba(124,192,242,0.35) !important;
-    background: rgba(255,255,255,0.09) !important;
-}
-
-/* tags selecionadas */
-section[data-testid="stSidebar"] .stMultiSelect div[data-baseweb="tag"] {
-    background: rgba(255,255,255,0.14) !important;
-    border: 1px solid rgba(255,255,255,0.14) !important;
-    border-radius: 12px !important;
-    color: #FFFFFF !important;
-    font-weight: 700 !important;
-    padding: 3px 8px !important;
-    margin: 3px !important;
-}
-
-/* texto dentro da tag */
-section[data-testid="stSidebar"] .stMultiSelect div[data-baseweb="tag"] span {
-    color: #FFFFFF !important;
-    font-size: 13px !important;
-}
-
-/* botão x da tag */
-section[data-testid="stSidebar"] .stMultiSelect div[data-baseweb="tag"] svg {
-    fill: rgba(255,255,255,0.88) !important;
-}
-
-/* campo de digitação */
-section[data-testid="stSidebar"] .stMultiSelect input {
-    color: #FFFFFF !important;
-}
-
-/* placeholder */
-section[data-testid="stSidebar"] .stMultiSelect input::placeholder {
-    color: rgba(255,255,255,0.55) !important;
-}
-
-/* setinha do select */
-section[data-testid="stSidebar"] .stMultiSelect svg {
-    fill: rgba(255,255,255,0.75) !important;
-}
-/* ===== UPLOAD COMPACTO ===== */
-section[data-testid="stSidebar"] .stFileUploader {
-    padding: 6px !important;
-    border-radius: 12px !important;
-    margin-bottom: 10px !important;
-    background: rgba(255,255,255,0.04) !important;
-    border: 1px solid rgba(255,255,255,0.06) !important;
-}
-
-section[data-testid="stSidebar"] .stFileUploader section {
-    padding: 8px 8px !important;
-    border-radius: 10px !important;
-    min-height: auto !important;
-    background: rgba(5,10,20,0.82) !important;
-}
-
-section[data-testid="stSidebar"] .stFileUploader small {
-    font-size: 10px !important;
-    line-height: 1.2 !important;
-}
-
-section[data-testid="stSidebar"] .stFileUploader button {
-    padding: 4px 8px !important;
-    font-size: 11px !important;
-    min-height: 30px !important;
-    border-radius: 8px !important;
-}
-
-section[data-testid="stSidebar"] .stFileUploader label {
-    font-size: 12px !important;
-    margin-bottom: 4px !important;
-}
-st.sidebar.markdown("##### Atualizar base")
-/* ===== UPLOAD COMO BOTÃO DISCRETO ===== */
-
-/* remove caixa grande */
-section[data-testid="stSidebar"] .stFileUploader section {
-    background: transparent !important;
-    border: none !important;
-    padding: 0 !important;
-}
-
-/* remove texto padrão */
-section[data-testid="stSidebar"] .stFileUploader small {
-    display: none !important;
-}
-
-/* remove título padrão */
-section[data-testid="stSidebar"] .stFileUploader label {
-    display: none !important;
-}
-
-/* container geral */
-section[data-testid="stSidebar"] .stFileUploader {
-    margin-bottom: 10px !important;
-    padding: 0 !important;
-    background: transparent !important;
-    border: none !important;
-}
-
-/* BOTÃO */
-section[data-testid="stSidebar"] .stFileUploader button {
-    width: 100% !important;
-    background: linear-gradient(135deg, #1E6BA8 0%, #2B7BBB 100%) !important;
-    border: none !important;
-    border-radius: 10px !important;
-    padding: 10px !important;
-    font-size: 13px !important;
-    font-weight: 600 !important;
-    color: #FFFFFF !important;
-    transition: all 0.2s ease !important;
-}
-
-/* hover */
-section[data-testid="stSidebar"] .stFileUploader button:hover {
-    background: linear-gradient(135deg, #2B7BBB 0%, #3C8ED1 100%) !important;
-    transform: translateY(-1px);
-}
-
-/* quando arquivo carregado */
-section[data-testid="stSidebar"] .stFileUploader div[data-testid="stFileUploaderDropzone"] {
-    background: transparent !important;
-}  
-                /* ===== UPLOAD REALMENTE COMPACTO ===== */
-section[data-testid="stSidebar"] [data-testid="stFileUploader"] {
-    margin-bottom: 8px !important;
-}
-
-section[data-testid="stSidebar"] [data-testid="stFileUploader"] > div {
-    padding: 0 !important;
-}
-
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
-    padding: 6px !important;
-    min-height: auto !important;
-    background: transparent !important;
-    border: none !important;
-}
-
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] > div {
-    padding: 0 !important;
-    gap: 6px !important;
-}
-
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] small {
-    display: none !important;
-}
-
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] div {
-    font-size: 12px !important;
-}
-
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button {
-    padding: 6px 10px !important;
-    min-height: 32px !important;
-    font-size: 12px !important;
-    border-radius: 10px !important;
-}
-
-section[data-testid="stSidebar"] .stFileUploader {
-    background: transparent !important;
-    border: none !important;
-    padding: 0 !important;
-} 
-                /* ===== UPLOAD MAIS BAIXO E MENOR ===== */
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
-    min-height: 90px !important;
-    padding: 8px 10px !important;
-    border-radius: 12px !important;
-}
-
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] > div {
-    min-height: 70px !important;
-    gap: 4px !important;
-    justify-content: center !important;
-}
-
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] div {
-    font-size: 11px !important;
-    line-height: 1.2 !important;
-}
-
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] small {
-    display: none !important;
-}
-
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button {
-    padding: 4px 8px !important;
-    min-height: 28px !important;
-    font-size: 11px !important;
-    border-radius: 8px !important;
-}     
+    .login-title {
+        text-align: center;
+        font-size: 28px;
+        font-weight: 800;
+        color: #0F172A;
+        margin-bottom: 8px;
+    }
+    .login-subtitle {
+        text-align: center;
+        font-size: 14px;
+        color: #64748B;
+        margin-bottom: 24px;
+    }
+    .login-box [data-testid="stTextInput"] {
+        margin-bottom: 0.4rem;
+    }
         </style>
     """, unsafe_allow_html=True)
 
@@ -288,22 +72,32 @@ section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button {
     st.markdown('<div class="login-title">🔐 Acesso ao Painel</div>', unsafe_allow_html=True)
     st.markdown('<div class="login-subtitle">Informe usuário e senha para continuar</div>', unsafe_allow_html=True)
 
+    if not USUARIOS_APP:
+        st.error("Autenticação não configurada. Defina auth.users no secrets.toml.")
+        st.stop()
+
     usuario = st.text_input("Usuário")
     senha = st.text_input("Senha", type="password")
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        entrar = st.button("Entrar", use_container_width=True)
+        entrar = st.button("Entrar", width="stretch")
 
     if entrar:
         usuario_ok = usuario in USUARIOS_APP
-        senha_ok = usuario_ok and USUARIOS_APP[usuario] == senha
+        senha_ok = usuario_ok and verify_password(senha, USUARIOS_APP[usuario])
 
         if usuario_ok and senha_ok:
             st.session_state["autenticado"] = True
             st.session_state["usuario_logado"] = usuario
             st.session_state["login_em"] = dt.datetime.now()
             st.session_state["expira_em"] = dt.datetime.now() + timedelta(hours=TEMPO_SESSAO_HORAS)
+            append_audit_event(
+                event="login_success",
+                user=usuario,
+                session_id=st.session_state.get("session_id", ""),
+                details="Login validado",
+            )
             st.rerun()
         else:
             st.error("Usuário ou senha inválidos.")
@@ -314,10 +108,20 @@ def check_login():
     if "autenticado" not in st.session_state:
         st.session_state["autenticado"] = False
 
+    if "session_id" not in st.session_state:
+        st.session_state["session_id"] = f"sess-{dt.datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+
     if st.session_state["autenticado"]:
         expira_em = st.session_state.get("expira_em")
 
         if expira_em and dt.datetime.now() > expira_em:
+            append_audit_event(
+                event="session_expired",
+                user=st.session_state.get("usuario_logado", ""),
+                page=st.session_state.get("pagina_selecionada", ""),
+                session_id=st.session_state.get("session_id", ""),
+                details="Sessao expirada por tempo limite",
+            )
             st.session_state["autenticado"] = False
             st.session_state["usuario_logado"] = None
             st.session_state["login_em"] = None
@@ -340,6 +144,9 @@ LOGO_PREFEITURA = ASSETS_DIR / "prefeitura.png"
 BACKGROUND_IMG = ASSETS_DIR / "background.png"
 
 def usuario_pode_ver_pagina(usuario, pagina):
+    if pagina == "Auditoria de Acesso":
+        return usuario == "admin"
+
     permissoes = PERMISSOES.get(usuario, [])
     return "*" in permissoes or pagina in permissoes
 
@@ -351,439 +158,7 @@ def image_to_base64(path):
 BACKGROUND_BASE64 = image_to_base64(BACKGROUND_IMG)
 LOGO_PATRIS_BASE64 = image_to_base64(LOGO_PATRIS)
 LOGO_SIDEBAR_BASE64 = image_to_base64(LOGO_SIDEBAR) or LOGO_PATRIS_BASE64
-
-st.markdown(f"""
-<style>
-
-[data-testid="stAppViewContainer"] {{
-    background-image:
-        linear-gradient(rgba(239, 248, 255, 0.72), rgba(239, 248, 255, 0.82)),
-        url("data:image/png;base64,{BACKGROUND_BASE64}");
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    background-attachment: fixed;
-    background-color: #EEF7FC;
-}}
-
-[data-testid="stMain"] {{
-    background: transparent;
-}}
-
-/* ===== APP ===== */
-.block-container {{
-    padding-top: 1.1rem;
-    padding-bottom: 2rem;
-    padding-left: 1.6rem;
-    padding-right: 1.6rem;
-    max-width: 100%;
-}}
-
-/* ===== SIDEBAR ===== */
-section[data-testid="stSidebar"] {{
-    background: linear-gradient(180deg, #0F4C81 0%, #0B2E4E 100%);
-    border-right: 1px solid rgba(255,255,255,0.06);
-}}
-
-section[data-testid="stSidebar"] > div {{
-    padding-top: 0.8rem;
-}}
-
-section[data-testid="stSidebar"] * {{
-    color: #F8FAFC !important;
-}}
-
-/* MENU */
-section[data-testid="stSidebar"] div[role="radiogroup"] label {{
-    background: rgba(255,255,255,0.05);
-    border-radius: 14px;
-    padding: 10px;
-    margin-bottom: 8px;
-}}
-
-section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {{
-    background: rgba(255,255,255,0.10);
-}}
-
-/* FILTROS */
-section[data-testid="stSidebar"] div[data-baseweb="select"] > div {{
-    background: rgba(255,255,255,0.06);
-    border-radius: 12px;
-}}
-
-</style>
-""", unsafe_allow_html=True)
-
-BASE_DIR = Path(__file__).resolve().parent
-
-st.markdown("""
-<style>
-
-/* ===== APP ===== */
-.block-container {{
-    padding-top: 1.1rem;
-    padding-bottom: 2rem;
-    padding-left: 1.6rem;
-    padding-right: 1.6rem;
-    max-width: 100%;
-}}
-
-/* ===== SIDEBAR CLEAN (OPÇÃO 1) ===== */
-section[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #0F4C81 0%, #0B2E4E 100%);
-    border-right: 1px solid rgba(255,255,255,0.06);
-}
-
-/* espaçamento geral */
-section[data-testid="stSidebar"] > div {
-    padding-top: 0.8rem;
-}
-
-/* textos */
-section[data-testid="stSidebar"] * {
-    color: #F8FAFC !important;
-}
-
-/* títulos */
-section[data-testid="stSidebar"] .stMarkdown h2,
-section[data-testid="stSidebar"] .stMarkdown h3 {
-    font-weight: 800 !important;
-    margin-bottom: 0.5rem;
-}
-
-/* ===== BLOCO UPLOAD ===== */
-section[data-testid="stSidebar"] .stFileUploader {
-    background: rgba(255,255,255,0.07);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 18px;
-    padding: 14px 12px 10px 12px;
-    margin-bottom: 18px;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
-}
-
-/* área interna do drag and drop */
-section[data-testid="stSidebar"] .stFileUploader section {
-    background: rgba(5,10,20,0.88) !important;
-    border: 1px dashed rgba(255,255,255,0.10) !important;
-    border-radius: 14px !important;
-    padding: 18px 12px !important;
-    min-height: auto !important;
-}
-
-/* texto principal do upload */
-section[data-testid="stSidebar"] .stFileUploader section small,
-section[data-testid="stSidebar"] .stFileUploader section div {
-    color: #F8FAFC !important;
-}
-
-/* botão browse */
-section[data-testid="stSidebar"] .stFileUploader button {
-    background: rgba(255,255,255,0.10) !important;
-    border: 1px solid rgba(255,255,255,0.14) !important;
-    border-radius: 12px !important;
-    color: #FFFFFF !important;
-    font-weight: 600 !important;
-}
-
-section[data-testid="stSidebar"] .stFileUploader button:hover {
-    background: rgba(255,255,255,0.16) !important;
-    border-color: rgba(255,255,255,0.22) !important;
-}
-
-/* ===== RADIO (MENU) ===== */
-section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] {
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 14px;
-    padding: 10px 12px;
-    margin-bottom: 8px;
-    transition: all 0.18s ease;
-}
-
-/* hover menu */
-section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:hover {
-    background: rgba(255,255,255,0.10);
-    transform: translateX(3px);
-}
-
-/* texto menu */
-section[data-testid="stSidebar"] div[role="radiogroup"] span {
-    font-weight: 600;
-}
-
-/* ===== SELECT / FILTROS ===== */
-section[data-testid="stSidebar"] div[data-baseweb="select"] > div,
-section[data-testid="stSidebar"] div[data-baseweb="input"] > div {
-    background: rgba(255,255,255,0.06) !important;
-    border: 1px solid rgba(255,255,255,0.08) !important;
-    border-radius: 14px !important;
-    min-height: 44px;
-}
-
-/* foco filtro */
-section[data-testid="stSidebar"] div[data-baseweb="select"] > div:focus-within {
-    border-color: #4DA3E6 !important;
-}
-
-/* ===== FILTRO DE PERÍODO ===== */
-
-/* caixa principal do multiselect */
-section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div {
-    background: rgba(255,255,255,0.06) !important;
-    border: 1px solid rgba(255,255,255,0.10) !important;
-    border-radius: 16px !important;
-    padding: 8px !important;
-    min-height: 54px !important;
-}
-
-/* hover */
-section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div:hover {
-    border-color: rgba(255,255,255,0.18) !important;
-    background: rgba(255,255,255,0.08) !important;
-}
-
-/* foco */
-section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div:focus-within {
-    border-color: #7CC0F2 !important;
-    box-shadow: 0 0 0 1px rgba(124,192,242,0.35) !important;
-}
-
-/* tags selecionadas */
-section[data-testid="stSidebar"] [data-testid="stMultiSelect"] [data-baseweb="tag"] {
-    background: rgba(255,255,255,0.14) !important;
-    border: 1px solid rgba(255,255,255,0.14) !important;
-    border-radius: 10px !important;
-    color: #FFFFFF !important;
-    font-weight: 700 !important;
-    margin: 4px !important;
-    padding: 2px 8px !important;
-}
-
-/* texto da tag */
-section[data-testid="stSidebar"] [data-testid="stMultiSelect"] [data-baseweb="tag"] span {
-    color: #FFFFFF !important;
-    font-size: 13px !important;
-}
-
-/* ícone x */
-section[data-testid="stSidebar"] [data-testid="stMultiSelect"] [data-baseweb="tag"] svg {
-    fill: rgba(255,255,255,0.88) !important;
-}
-
-/* input interno */
-section[data-testid="stSidebar"] [data-testid="stMultiSelect"] input {
-    color: #FFFFFF !important;
-}
-
-/* placeholder */
-section[data-testid="stSidebar"] [data-testid="stMultiSelect"] input::placeholder {
-    color: rgba(255,255,255,0.60) !important;
-}
-
-/* ===== TEXTO AUXILIAR ===== */
-section[data-testid="stSidebar"] small {
-    color: rgba(255,255,255,0.65) !important;
-}
-
-/* ===== TIPOGRAFIA ===== */
-h1 {
-    color: #0F172A !important;
-    font-weight: 800 !important;
-    letter-spacing: -0.7px;
-    margin-bottom: 0.15rem;
-}
-
-h2, h3 {
-    color: #0F172A !important;
-    font-weight: 700 !important;
-    letter-spacing: -0.3px;
-}
-
-p, label, .stMarkdown, .stCaption {
-    color: #334155;
-}
-
-/* ===== METRICAS NATIVAS ===== */
-div[data-testid="stMetric"] {
-    background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
-    border: 1px solid #E2E8F0;
-    padding: 1rem;
-    border-radius: 18px;
-    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
-}
-
-/* ===== EXPANDER ===== */
-details {
-    background: #0B1220;
-    border: 1px solid #E2E8F0;
-    border-radius: 16px;
-    padding: 0.35rem 0.8rem;
-    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.04);
-}
-
-/* ===== INPUTS ===== */
-div[data-baseweb="select"] > div,
-div[data-baseweb="input"] > div {
-    border-radius: 12px !important;
-    border-color: #CBD5E1 !important;
-}
-
-/* ===== PLOTLY CONTAINER ===== */
-div[data-testid="stPlotlyChart"] {
-    background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%) !important;
-    border: 1px solid #E2E8F0 !important;
-    border-radius: 18px !important;
-    padding: 0.45rem 0.45rem 0.25rem 0.45rem !important;
-    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06) !important;
-}
-
-div[data-testid="stPlotlyChart"] > div {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-}
-
-.chart-exec-header {
-    background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
-    border: 1px solid #E2E8F0;
-    border-bottom: none;
-    border-radius: 18px 18px 0 0;
-    padding: 12px 14px 10px 14px;
-    margin-bottom: -8px;
-    box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05);
-}
-
-.chart-exec-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-}
-
-.chart-exec-title {
-    font-size: 15px;
-    font-weight: 800;
-    color: #0F172A;
-    line-height: 1.25;
-    letter-spacing: -0.2px;
-}
-
-.chart-exec-subtitle {
-    font-size: 12px;
-    color: #64748B;
-    margin-top: 3px;
-    line-height: 1.35;
-}
-
-.chart-exec-chip {
-    white-space: nowrap;
-    font-size: 11px;
-    font-weight: 700;
-    color: #0F6CBD;
-    background: #EAF3FF;
-    border: 1px solid #BFDBFE;
-    border-radius: 999px;
-    padding: 4px 9px;
-}
-
-.chart-exec-chip-success {
-    color: #166534;
-    background: #DCFCE7;
-    border-color: #86EFAC;
-}
-
-.chart-exec-chip-warning {
-    color: #92400E;
-    background: #FEF3C7;
-    border-color: #FCD34D;
-}
-
-.chart-exec-chip-danger {
-    color: #991B1B;
-    background: #FEE2E2;
-    border-color: #FCA5A5;
-}
-
-.chart-exec-chip-neutral {
-    color: #334155;
-    background: #E2E8F0;
-    border-color: #CBD5E1;
-}
-
-.chart-exec-chip-info {
-    color: #0F6CBD;
-    background: #EAF3FF;
-    border-color: #BFDBFE;
-}
-
-/* ===== SECTION CARD ===== */
-.section-card {
-    background: transparent;
-}
-
-.section-title {
-    font-size: 1.06rem;
-    font-weight: 800;
-    color: #0F172A;
-    margin-bottom: 0.2rem;
-    letter-spacing: -0.3px;
-}
-
-.section-subtitle {
-    font-size: 0.92rem;
-    color: #64748B;
-    margin-bottom: 1rem;
-}
-
-/* ===== HERO / TOPO ===== */
-.hero-wrap {
-    background: linear-gradient(135deg, rgba(15,108,189,0.92) 0%, rgba(37,99,235,0.88) 100%);
-    border: 1px solid rgba(255,255,255,0.20);
-    border-radius: 24px;
-    padding: 1.2rem 1.25rem;
-    margin-bottom: 1.1rem;
-    box-shadow: 0 16px 36px rgba(15, 23, 42, 0.10);
-}
-
-.hero-title {
-    color: #FFFFFF;
-    font-size: 1.9rem;
-    font-weight: 800;
-    letter-spacing: -0.8px;
-    margin-bottom: 0.2rem;
-}
-
-.hero-subtitle {
-    color: rgba(255,255,255,0.82);
-    font-size: 0.98rem;
-    margin-bottom: 1rem;
-}
-
-.hero-chip-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-}
-
-.hero-chip {
-    background: rgba(255,255,255,0.12);
-    color: #FFFFFF;
-    border: 1px solid rgba(255,255,255,0.05);
-    border-radius: 999px;
-    padding: 0.42rem 0.78rem;
-    font-size: 0.82rem;
-    font-weight: 600;
-    backdrop-filter: blur(6px);
-}
-
-.soft-divider {
-    height: 1px;
-    background: linear-gradient(90deg, rgba(148,163,184,0), rgba(148,163,184,0.45), rgba(148,163,184,0));
-    margin: 0.6rem 0 1rem 0;
-}
-
-</style>
-""", unsafe_allow_html=True)
+apply_global_styles(st, BACKGROUND_BASE64)
 
 MESES = [
     "MARCO.26", "ABRIL.26", "MAIO.26", "JUNHO.26",
@@ -1083,7 +458,7 @@ def plot(fig, prefix="grafico"):
         new_margin_top = max(28, int(current_margin) - 44) if current_margin is not None else 34
         fig.update_layout(title=None, margin=dict(t=new_margin_top))
 
-    st.plotly_chart(fig, use_container_width=True, key=f"{prefix}_{_plot_counter}")
+    st.plotly_chart(fig, width="stretch", key=f"{prefix}_{_plot_counter}")
 
 def local_excel_path():
     base = Path(__file__).parent
@@ -1630,7 +1005,7 @@ def financeiro_kpis(fin_df):
     }
 
 
-def render_financeiro_page(fin_df):
+def render_financeiro_page(fin_df, meses_filtrados):
     st.subheader("Financeiro")
 
     if fin_df is None or fin_df.empty:
@@ -1640,8 +1015,8 @@ def render_financeiro_page(fin_df):
     work = fin_df.copy()
 
     # respeita o filtro global de período do app
-    if "meses_selecionados" in globals() and "mes_label" in work.columns:
-        work = work[work["mes_label"].isin(meses_selecionados)].copy()
+    if meses_filtrados and "mes_label" in work.columns:
+        work = work[work["mes_label"].isin(meses_filtrados)].copy()
 
     work = work.dropna(subset=["valor_num"])
     if work.empty:
@@ -2392,7 +1767,7 @@ def render_meta_card(categoria, executado, meta, atingido_pct, saldo_pct):
     )
 
 
-def render_metas_page(data, metas_df, total_geral_map=None):
+def render_metas_page(data, metas_df, total_geral_map=None, meses_filtrados=None):
     st.subheader("Metas do Plano")
 
     if metas_df is None or metas_df.empty:
@@ -2436,8 +1811,8 @@ def render_metas_page(data, metas_df, total_geral_map=None):
     # Regra solicitada: usar somente o TOTAL GERAL do mes de referencia.
     # O mes de referencia deve seguir exatamente o filtro selecionado na sidebar.
     ordem_meses_label = [MESES_LABEL[m] for m in MESES]
-    meses_filtrados = [m for m in ordem_meses_label if m in (meses_selecionados if "meses_selecionados" in globals() else [])]
-    mes_referencia = meses_filtrados[-1] if meses_filtrados else None
+    meses_ref = [m for m in ordem_meses_label if m in (meses_filtrados or [])]
+    mes_referencia = meses_ref[-1] if meses_ref else None
 
     # Fallback defensivo: se nao houver filtro valido, usa o ultimo mes presente em metas_df.
     if mes_referencia is None and "mes" in metas_df.columns:
@@ -4098,15 +3473,15 @@ def render_rh_indicator_card(nome_indicador, panel_df):
         subtitle_color="#64748B",
     )
 
-def render_rh_page(df):
+def render_rh_page(df, meses_filtrados):
     unidade = "RH"
     st.subheader("Gestão de Pessoas")
 
     work_df = df.copy()
 
     # respeita o filtro lateral de período já existente no app
-    if "mes_label" in work_df.columns and "meses_selecionados" in globals():
-        work_df = work_df[work_df["mes_label"].isin(meses_selecionados)].copy()
+    if "mes_label" in work_df.columns and meses_filtrados:
+        work_df = work_df[work_df["mes_label"].isin(meses_filtrados)].copy()
 
     indicadores_rh = [
         "TOTAL DE COLABORADORES CLT",
@@ -4291,11 +3666,11 @@ apply_visual_theme(visual_theme)
 st.markdown("### Aparência")
 theme_col1, theme_col2, theme_col3 = st.columns(3)
 
-if theme_col1.button("Portal Clínico", use_container_width=True):
+if theme_col1.button("Portal Clínico", width="stretch"):
     st.session_state["visual_theme"] = "Portal Clínico (Azul)"
-if theme_col2.button("Pro Analytics", use_container_width=True):
+if theme_col2.button("Pro Analytics", width="stretch"):
     st.session_state["visual_theme"] = "Pro Analytics (Escuro)"
-if theme_col3.button("Healthcare Clean", use_container_width=True):
+if theme_col3.button("Healthcare Clean", width="stretch"):
     st.session_state["visual_theme"] = "Healthcare Clean (Verde)"
 
 if st.session_state["visual_theme"] != visual_theme:
@@ -4317,6 +3692,7 @@ paginas_administrativo = [
     "Metas do Plano",
     "Gestão de Pessoas",
     "Financeiro",
+    "Auditoria de Acesso",
 ]
 
 todas_paginas = paginas_unidades + paginas_basicas + paginas_administrativo
@@ -4331,6 +3707,7 @@ pagina_icons = {
     "Gestão de Pessoas": "👥",
     "Financeiro": "💰",
     "Metas do Plano": "📊",
+    "Auditoria de Acesso": "🛡️",
 }
 
 paginas_disponiveis = [
@@ -4353,7 +3730,7 @@ for page in paginas_unidades:
     if st.sidebar.button(
         f"{pagina_icons.get(page, '📌')}  {page}",
         key=f"menu_unidades_{normalize_text(page)}",
-        use_container_width=True,
+        width="stretch",
         type="primary" if active else "secondary"
     ):
         st.session_state["pagina_selecionada"] = page
@@ -4366,7 +3743,7 @@ for page in paginas_basicas:
     if st.sidebar.button(
         f"{pagina_icons.get(page, '📌')}  {page}",
         key=f"menu_basicas_{normalize_text(page)}",
-        use_container_width=True,
+        width="stretch",
         type="primary" if active else "secondary"
     ):
         st.session_state["pagina_selecionada"] = page
@@ -4379,12 +3756,23 @@ for page in paginas_administrativo:
     if st.sidebar.button(
         f"{pagina_icons.get(page, '📌')}  {page}",
         key=f"menu_administrativo_{normalize_text(page)}",
-        use_container_width=True,
+        width="stretch",
         type="primary" if active else "secondary"
     ):
         st.session_state["pagina_selecionada"] = page
 
 pagina = st.session_state["pagina_selecionada"]
+
+if st.session_state.get("last_audit_page") != pagina or st.session_state.get("last_audit_user") != usuario_logado:
+    append_audit_event(
+        event="page_access",
+        user=usuario_logado,
+        page=pagina,
+        session_id=st.session_state.get("session_id", ""),
+        details="Acesso de pagina no painel",
+    )
+    st.session_state["last_audit_page"] = pagina
+    st.session_state["last_audit_user"] = usuario_logado
 
 st.sidebar.markdown("## Filtros")
 default_periodo = default_previous_month_selection()
@@ -4394,7 +3782,6 @@ if "meses_selecionados" not in st.session_state:
 meses_selecionados = st.sidebar.multiselect(
     "Período",
     [MESES_LABEL[m] for m in MESES],
-    default=default_periodo,
     key="meses_selecionados"
 )
 
@@ -4402,10 +3789,10 @@ st.sidebar.markdown("### Atualizar base")
 upload_col1, upload_col2 = st.sidebar.columns([1, 1])
 
 with upload_col1:
-    abrir_upload = st.button("📁 Atualizar", use_container_width=True, key="footer_upload_open")
+    abrir_upload = st.button("📁 Atualizar", width="stretch", key="footer_upload_open")
 
 with upload_col2:
-    limpar_upload = st.button("✖", use_container_width=True, key="footer_upload_clear")
+    limpar_upload = st.button("✖", width="stretch", key="footer_upload_clear")
 
 if limpar_upload:
     st.session_state.pop("uploaded_file", None)
@@ -4497,13 +3884,61 @@ elif pagina == "Atenção Primária":
     ])
 
 elif pagina == "Gestão de Pessoas":
-    render_rh_page(data)
+    render_rh_page(data, meses_selecionados)
 
 elif pagina == "Financeiro":
-    render_financeiro_page(financeiro_data)
+    render_financeiro_page(financeiro_data, meses_selecionados)
+
+elif pagina == "Auditoria de Acesso":
+    st.markdown("## 🛡️ Auditoria de Acesso")
+    st.caption("Página restrita ao usuário admin. Exibe eventos de login e acesso registrados no app.")
+
+    eventos = read_audit_events(limit=5000)
+    if not eventos:
+        st.info("Nenhum evento de auditoria encontrado até o momento.")
+    else:
+        audit_df = pd.DataFrame(eventos)
+
+        if audit_df.empty:
+            st.info("Nenhum evento disponível para exibição.")
+        else:
+            col1, col2, col3 = st.columns(3)
+            logins_df = audit_df[audit_df["event"] == "login_success"].copy()
+            acessos_df = audit_df[audit_df["event"] == "page_access"].copy()
+
+            total_logins = int(logins_df.shape[0])
+            usuarios_login = int(logins_df["user"].nunique()) if "user" in logins_df.columns else 0
+            usuarios_acesso = int(acessos_df["user"].nunique()) if "user" in acessos_df.columns else 0
+
+            col1.metric("Logins registrados", f"{total_logins}")
+            col2.metric("Usuários com login", f"{usuarios_login}")
+            col3.metric("Usuários que acessaram páginas", f"{usuarios_acesso}")
+
+            st.markdown("### Logins realizados")
+            if logins_df.empty:
+                st.caption("Ainda não há eventos de login_success.")
+            else:
+                login_cols = [c for c in ["timestamp", "user", "session_id", "details"] if c in logins_df.columns]
+                st.dataframe(logins_df[login_cols], width="stretch", hide_index=True)
+
+            st.markdown("### Usuários que acessaram páginas")
+            if acessos_df.empty:
+                st.caption("Ainda não há eventos de page_access.")
+            else:
+                resumo_usuarios = (
+                    acessos_df.groupby("user", dropna=False)["page"]
+                    .nunique()
+                    .reset_index(name="paginas_distintas")
+                    .sort_values("paginas_distintas", ascending=False)
+                )
+                st.dataframe(resumo_usuarios, width="stretch", hide_index=True)
+
+            st.markdown("### Eventos recentes")
+            eventos_cols = [c for c in ["timestamp", "event", "user", "page", "session_id", "details"] if c in audit_df.columns]
+            st.dataframe(audit_df[eventos_cols], width="stretch", hide_index=True)
 
 else:
-    render_metas_page(data, metas_data, metas_total_geral_map)
+    render_metas_page(data, metas_data, metas_total_geral_map, meses_selecionados)
 
 with st.expander("Base transformada"):
     if st.checkbox("Mostrar tabela (primeiras 300 linhas)", key="show_base_transformada_table"):
