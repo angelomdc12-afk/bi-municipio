@@ -27,6 +27,7 @@ PERMISSOES_PADRAO = {
     "denis": ["*"],
     "prefeitura": ["UPA Luziânia",
     "UPA Jardim Ingá",
+    "SAMU",
     "HMJI",
     "Atenção Secundária",
     "Saúde Mental",
@@ -959,6 +960,160 @@ def load_financeiro_data(file_bytes=None, _mtime=None):
     df["mes"] = pd.Categorical(df["mes"], categories=MESES, ordered=True)
     df = df.sort_values(["grupo_norm", "fornecedor_norm", "mes"]).reset_index(drop=True)
     return df
+
+
+
+
+@st.cache_data(show_spinner=False)
+def load_samu_data():
+    base = Path(__file__).parent
+    path = None
+    for name in ["urgencia_tratado_validado.xlsx", "urgencia_tratado_final.xlsx"]:
+        candidate = base / name
+        if candidate.exists():
+            path = candidate
+            break
+
+    empty_result = {
+        "diario": pd.DataFrame(columns=["Data", "Dia", "Descricao", "Codigo_SIGTAP", "Atendimentos"]),
+        "resumo": pd.DataFrame(columns=["Descricao", "Codigo_SIGTAP", "Total", "Falta", "Eficacia", "Meta"]),
+        "titulo": "SAMU",
+    }
+
+    if path is None:
+        return empty_result
+
+    xls = pd.ExcelFile(path)
+    if "SAMU" not in xls.sheet_names:
+        return empty_result
+
+    raw = pd.read_excel(path, sheet_name="SAMU", header=None)
+    if raw.empty or raw.shape[1] < 2:
+        return empty_result
+
+    titulo = str(raw.iloc[0, 0]).strip() if pd.notna(raw.iloc[0, 0]) else "SAMU"
+
+    header_row = None
+    for idx in range(len(raw)):
+        c0 = normalize_text(raw.iloc[idx, 0])
+        c1 = normalize_text(raw.iloc[idx, 1])
+        if c0 == "DESCRICAO" and c1 and "SIGTAP" in c1:
+            header_row = idx
+            break
+
+    if header_row is None:
+        return {**empty_result, "titulo": titulo}
+
+    header_vals = raw.iloc[header_row]
+    day_cols = []
+    total_col = None
+    falta_col = None
+    eficacia_col = None
+    meta_col = None
+
+    for col_idx in range(2, raw.shape[1]):
+        hv = header_vals.iloc[col_idx]
+        hv_norm = normalize_text(hv)
+        hv_num = pd.to_numeric(pd.Series([hv]), errors="coerce").iloc[0]
+
+        if pd.notna(hv_num) and float(hv_num).is_integer() and 1 <= int(hv_num) <= 31:
+            day_cols.append((col_idx, int(hv_num)))
+            continue
+
+        if hv_norm == "TOTAL":
+            total_col = col_idx
+        elif hv_norm == "FALTA":
+            falta_col = col_idx
+        elif hv_norm and "% EFICACIA" in hv_norm:
+            eficacia_col = col_idx
+        elif hv_norm == "META":
+            meta_col = col_idx
+
+    month_map = {
+        "JANEIRO": 1,
+        "FEVEREIRO": 2,
+        "MARCO": 3,
+        "ABRIL": 4,
+        "MAIO": 5,
+        "JUNHO": 6,
+        "JULHO": 7,
+        "AGOSTO": 8,
+        "SETEMBRO": 9,
+        "OUTUBRO": 10,
+        "NOVEMBRO": 11,
+        "DEZEMBRO": 12,
+    }
+    titulo_norm = normalize_text(titulo) or ""
+    month_year = re.search(r"(JANEIRO|FEVEREIRO|MARCO|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO)\s+(\d{4})", titulo_norm)
+
+    base_date = None
+    if month_year:
+        month_name, year_str = month_year.groups()
+        month_num = month_map.get(month_name)
+        if month_num:
+            base_date = dt.date(int(year_str), month_num, 1)
+
+    diario_rows = []
+    resumo_rows = []
+
+    for ridx in range(header_row + 1, len(raw)):
+        row = raw.iloc[ridx]
+        desc = row.iloc[0] if pd.notna(row.iloc[0]) else None
+        if not desc:
+            continue
+
+        desc_text = str(desc).strip()
+        if normalize_text(desc_text) == "TOTAL:":
+            continue
+
+        codigo = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else None
+
+        total_val = pd.to_numeric(pd.Series([row.iloc[total_col]]), errors="coerce").iloc[0] if total_col is not None else pd.NA
+        falta_val = pd.to_numeric(pd.Series([row.iloc[falta_col]]), errors="coerce").iloc[0] if falta_col is not None else pd.NA
+        efic_val = pd.to_numeric(pd.Series([row.iloc[eficacia_col]]), errors="coerce").iloc[0] if eficacia_col is not None else pd.NA
+        meta_val = pd.to_numeric(pd.Series([row.iloc[meta_col]]), errors="coerce").iloc[0] if meta_col is not None else pd.NA
+
+        resumo_rows.append({
+            "Descricao": desc_text,
+            "Codigo_SIGTAP": codigo,
+            "Total": float(total_val) if pd.notna(total_val) else pd.NA,
+            "Falta": float(falta_val) if pd.notna(falta_val) else pd.NA,
+            "Eficacia": float(efic_val) if pd.notna(efic_val) else pd.NA,
+            "Meta": float(meta_val) if pd.notna(meta_val) else pd.NA,
+        })
+
+        for col_idx, day_num in day_cols:
+            val = pd.to_numeric(pd.Series([row.iloc[col_idx]]), errors="coerce").iloc[0]
+            if pd.isna(val):
+                continue
+
+            data_ref = None
+            if base_date is not None:
+                try:
+                    data_ref = dt.date(base_date.year, base_date.month, day_num)
+                except ValueError:
+                    data_ref = None
+
+            diario_rows.append({
+                "Data": pd.to_datetime(data_ref) if data_ref is not None else pd.NaT,
+                "Dia": day_num,
+                "Descricao": desc_text,
+                "Codigo_SIGTAP": codigo,
+                "Atendimentos": float(val),
+            })
+
+    diario_df = pd.DataFrame(diario_rows)
+    resumo_df = pd.DataFrame(resumo_rows)
+
+    if not diario_df.empty:
+        diario_df["Atendimentos"] = pd.to_numeric(diario_df["Atendimentos"], errors="coerce")
+        diario_df = diario_df.dropna(subset=["Atendimentos"]).copy()
+
+    return {
+        "diario": diario_df,
+        "resumo": resumo_df,
+        "titulo": titulo,
+    }
 
 
 def format_currency_br(x):
@@ -3512,6 +3667,152 @@ def render_rh_page(df, meses_filtrados):
 
     section_end()
 
+
+
+def render_samu_page():
+    samu = load_samu_data()
+    diario = samu["diario"].copy()
+    resumo = samu["resumo"].copy()
+    titulo = samu.get("titulo", "SAMU")
+
+    st.markdown("## 🚨 SAMU")
+
+    if diario.empty and resumo.empty:
+        st.warning("A aba SAMU não foi encontrada ou está vazia na planilha.")
+        return
+
+    data_min = diario["Data"].dropna().min().date() if "Data" in diario.columns and not diario["Data"].dropna().empty else None
+    data_max = diario["Data"].dropna().max().date() if "Data" in diario.columns and not diario["Data"].dropna().empty else None
+
+    st.markdown("#### Filtros")
+    if data_min and data_max:
+        periodo = st.date_input("Período", value=(data_min, data_max), min_value=data_min, max_value=data_max, key="samu_periodo")
+    else:
+        periodo = None
+
+    st.caption(f"Fonte: {titulo}")
+    st.divider()
+
+    diario_filtrado = diario.copy()
+    if periodo is not None and not diario_filtrado.empty:
+        if isinstance(periodo, (list, tuple)) and len(periodo) == 2:
+            ini = pd.to_datetime(periodo[0])
+            fim = pd.to_datetime(periodo[1])
+            diario_filtrado = diario_filtrado[(diario_filtrado["Data"] >= ini) & (diario_filtrado["Data"] <= fim)].copy()
+        elif isinstance(periodo, dt.date):
+            alvo = pd.to_datetime(periodo)
+            diario_filtrado = diario_filtrado[diario_filtrado["Data"] == alvo].copy()
+
+    if diario_filtrado.empty:
+        st.info("Sem dados do SAMU para o período selecionado.")
+        return
+
+    diario_total = diario_filtrado.groupby("Data", as_index=False)["Atendimentos"].sum().sort_values("Data")
+    procedimentos_total = diario_filtrado.groupby(["Descricao", "Codigo_SIGTAP"], as_index=False)["Atendimentos"].sum().sort_values("Atendimentos", ascending=False)
+
+    total_periodo = float(diario_filtrado["Atendimentos"].sum())
+    media_diaria = float(diario_total["Atendimentos"].mean()) if not diario_total.empty else 0.0
+    melhor_dia = float(diario_total["Atendimentos"].max()) if not diario_total.empty else 0.0
+    melhor_data = diario_total.loc[diario_total["Atendimentos"].idxmax(), "Data"].strftime("%d/%m/%Y") if not diario_total.empty else "-"
+    procedimentos_ativos = int(procedimentos_total["Descricao"].nunique())
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        top_kpi_card("Total no período", f"{int(total_periodo):,}".replace(",", "."), icon="📈", subtitle="Soma dos atendimentos", accent_color=SEMANTIC_COLORS["success"], subtitle_color=SEMANTIC_COLORS["success"])
+    with k2:
+        top_kpi_card("Média diária", f"{media_diaria:,.1f}".replace(",", "."), icon="📆", subtitle="Atendimentos por dia", accent_color=SEMANTIC_COLORS["primary"], subtitle_color=SEMANTIC_COLORS["primary"])
+    with k3:
+        top_kpi_card("Melhor dia", f"{int(melhor_dia):,}".replace(",", "."), icon="🏆", subtitle=f"Data: {melhor_data}", accent_color=SEMANTIC_COLORS["warning"], subtitle_color=SEMANTIC_COLORS["warning"])
+    with k4:
+        top_kpi_card("Procedimentos ativos", f"{procedimentos_ativos}", icon="🧾", subtitle="Com produção no período", accent_color=SEMANTIC_COLORS["danger"], subtitle_color=SEMANTIC_COLORS["danger"])
+
+    section_start("Evolução diária", "Atendimentos totais por dia")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=diario_total["Data"], y=diario_total["Atendimentos"], mode="lines+markers", line=dict(color=SEMANTIC_COLORS["primary"], width=3), marker=dict(size=6), hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>"))
+    fig = apply_plotly_theme(fig, title="Produção diária do SAMU", subtitle="", yaxis_title="Atendimentos", height=350, legend=False)
+    plot(fig, "samu_evolucao_diaria")
+    section_end()
+
+    section_start("Top procedimentos", "Maiores volumes no período filtrado")
+    top_proc = procedimentos_total.head(10).copy()
+    if not top_proc.empty:
+        fig2 = px.bar(top_proc.sort_values("Atendimentos", ascending=True), x="Atendimentos", y="Descricao", orientation="h", color_discrete_sequence=[SEMANTIC_COLORS["primary_soft"]])
+        fig2.update_traces(hovertemplate="<b>%{y}</b><br>%{x:,.0f}<extra></extra>")
+        fig2 = apply_plotly_theme(fig2, title="Top 10 procedimentos", subtitle="", yaxis_title="", height=420, legend=False)
+        fig2.update_xaxes(title_text="Atendimentos")
+        plot(fig2, "samu_top_procedimentos")
+    else:
+        st.info("Sem dados de procedimentos para o período selecionado.")
+    section_end()
+
+    section_start("Gráficos por indicador", "Evolução diária individual de cada indicador da aba SAMU")
+    indicadores_ordenados = procedimentos_total[["Descricao", "Codigo_SIGTAP", "Atendimentos"]].copy()
+    indicadores_ordenados = indicadores_ordenados.sort_values("Atendimentos", ascending=False).reset_index(drop=True)
+
+    if indicadores_ordenados.empty:
+        st.info("Sem indicadores com produção no período selecionado.")
+    else:
+        for idx, row in indicadores_ordenados.iterrows():
+            descricao = str(row.get("Descricao", "Indicador"))
+            codigo_sigtap = row.get("Codigo_SIGTAP")
+            codigo_txt = str(codigo_sigtap) if pd.notna(codigo_sigtap) else "-"
+
+            serie_indicador = (
+                diario_filtrado[diario_filtrado["Descricao"] == descricao]
+                .groupby("Data", as_index=False)["Atendimentos"]
+                .sum()
+                .sort_values("Data")
+            )
+
+            if serie_indicador.empty:
+                continue
+
+            total_ind = float(serie_indicador["Atendimentos"].sum())
+            media_ind = float(serie_indicador["Atendimentos"].mean())
+            melhor_ind = float(serie_indicador["Atendimentos"].max())
+
+            st.markdown(f"#### {idx + 1}. {descricao}")
+            st.caption(
+                f"SIGTAP: {codigo_txt} · Total: {int(total_ind):,} · Média diária: {media_ind:,.1f} · Pico diário: {int(melhor_ind):,}".replace(",", ".")
+            )
+
+            fig_ind = go.Figure()
+            fig_ind.add_trace(
+                go.Scatter(
+                    x=serie_indicador["Data"],
+                    y=serie_indicador["Atendimentos"],
+                    mode="lines+markers",
+                    line=dict(color=SEMANTIC_COLORS["series_2"], width=2.8),
+                    marker=dict(size=6, color=SEMANTIC_COLORS["series_2"]),
+                    hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>",
+                )
+            )
+            fig_ind = apply_plotly_theme(
+                fig_ind,
+                title=f"{descricao}",
+                subtitle="",
+                yaxis_title="Atendimentos",
+                height=300,
+                legend=False,
+            )
+            plot(fig_ind, f"samu_indicador_{idx}")
+            st.divider()
+    section_end()
+
+    section_start("Resumo por procedimento", "Totais do período e colunas de meta da aba SAMU")
+    resumo_periodo = procedimentos_total.rename(columns={"Atendimentos": "Total_Periodo"})
+    tabela_resumo = resumo_periodo.merge(resumo[["Descricao", "Codigo_SIGTAP", "Meta", "Falta", "Eficacia"]], on=["Descricao", "Codigo_SIGTAP"], how="left")
+    tabela_resumo = tabela_resumo.sort_values("Total_Periodo", ascending=False).reset_index(drop=True)
+
+    if "Eficacia" in tabela_resumo.columns:
+        tabela_resumo["Eficacia_pct"] = (pd.to_numeric(tabela_resumo["Eficacia"], errors="coerce") * 100).round(1)
+    else:
+        tabela_resumo["Eficacia_pct"] = pd.NA
+
+    st.dataframe(tabela_resumo[["Descricao", "Codigo_SIGTAP", "Total_Periodo", "Meta", "Falta", "Eficacia_pct"]].rename(columns={"Descricao": "Descrição", "Codigo_SIGTAP": "Cód. SIGTAP", "Total_Periodo": "Total no período", "Meta": "Meta", "Falta": "Falta", "Eficacia_pct": "% Eficácia"}), use_container_width=True)
+    section_end()
+
+
 st.sidebar.markdown(
     f"""
     <style>
@@ -3930,6 +4231,7 @@ def render_produtividade_medica_page():
 paginas_unidades = [
     "UPA Luziânia",
     "UPA Jardim Ingá",
+    "SAMU",
     "HMJI",
 ]
 
@@ -3952,6 +4254,7 @@ todas_paginas = paginas_unidades + paginas_basicas + paginas_administrativo
 pagina_icons = {
     "UPA Luziânia": "🚑",
     "UPA Jardim Ingá": "🚑",
+    "SAMU": "🚨",
     "HMJI": "🏥",
     "Atenção Secundária": "🩺",
     "Saúde Mental": "🧠",
@@ -3975,6 +4278,152 @@ if not paginas_disponiveis:
 if "pagina_selecionada" not in st.session_state or st.session_state["pagina_selecionada"] not in paginas_disponiveis:
     st.session_state["pagina_selecionada"] = paginas_disponiveis[0]
 
+
+
+def render_samu_page():
+    samu = load_samu_data()
+    diario = samu["diario"].copy()
+    resumo = samu["resumo"].copy()
+    titulo = samu.get("titulo", "SAMU")
+
+    st.markdown("## 🚨 SAMU")
+
+    if diario.empty and resumo.empty:
+        st.warning("A aba SAMU não foi encontrada ou está vazia na planilha.")
+        return
+
+    data_min = diario["Data"].dropna().min().date() if "Data" in diario.columns and not diario["Data"].dropna().empty else None
+    data_max = diario["Data"].dropna().max().date() if "Data" in diario.columns and not diario["Data"].dropna().empty else None
+
+    st.markdown("#### Filtros")
+    if data_min and data_max:
+        periodo = st.date_input("Período", value=(data_min, data_max), min_value=data_min, max_value=data_max, key="samu_periodo")
+    else:
+        periodo = None
+
+    st.caption(f"Fonte: {titulo}")
+    st.divider()
+
+    diario_filtrado = diario.copy()
+    if periodo is not None and not diario_filtrado.empty:
+        if isinstance(periodo, (list, tuple)) and len(periodo) == 2:
+            ini = pd.to_datetime(periodo[0])
+            fim = pd.to_datetime(periodo[1])
+            diario_filtrado = diario_filtrado[(diario_filtrado["Data"] >= ini) & (diario_filtrado["Data"] <= fim)].copy()
+        elif isinstance(periodo, dt.date):
+            alvo = pd.to_datetime(periodo)
+            diario_filtrado = diario_filtrado[diario_filtrado["Data"] == alvo].copy()
+
+    if diario_filtrado.empty:
+        st.info("Sem dados do SAMU para o período selecionado.")
+        return
+
+    diario_total = diario_filtrado.groupby("Data", as_index=False)["Atendimentos"].sum().sort_values("Data")
+    procedimentos_total = diario_filtrado.groupby(["Descricao", "Codigo_SIGTAP"], as_index=False)["Atendimentos"].sum().sort_values("Atendimentos", ascending=False)
+
+    total_periodo = float(diario_filtrado["Atendimentos"].sum())
+    media_diaria = float(diario_total["Atendimentos"].mean()) if not diario_total.empty else 0.0
+    melhor_dia = float(diario_total["Atendimentos"].max()) if not diario_total.empty else 0.0
+    melhor_data = diario_total.loc[diario_total["Atendimentos"].idxmax(), "Data"].strftime("%d/%m/%Y") if not diario_total.empty else "-"
+    procedimentos_ativos = int(procedimentos_total["Descricao"].nunique())
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        top_kpi_card("Total no período", f"{int(total_periodo):,}".replace(",", "."), icon="📈", subtitle="Soma dos atendimentos", accent_color=SEMANTIC_COLORS["success"], subtitle_color=SEMANTIC_COLORS["success"])
+    with k2:
+        top_kpi_card("Média diária", f"{media_diaria:,.1f}".replace(",", "."), icon="📆", subtitle="Atendimentos por dia", accent_color=SEMANTIC_COLORS["primary"], subtitle_color=SEMANTIC_COLORS["primary"])
+    with k3:
+        top_kpi_card("Melhor dia", f"{int(melhor_dia):,}".replace(",", "."), icon="🏆", subtitle=f"Data: {melhor_data}", accent_color=SEMANTIC_COLORS["warning"], subtitle_color=SEMANTIC_COLORS["warning"])
+    with k4:
+        top_kpi_card("Procedimentos ativos", f"{procedimentos_ativos}", icon="🧾", subtitle="Com produção no período", accent_color=SEMANTIC_COLORS["danger"], subtitle_color=SEMANTIC_COLORS["danger"])
+
+    section_start("Evolução diária", "Atendimentos totais por dia")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=diario_total["Data"], y=diario_total["Atendimentos"], mode="lines+markers", line=dict(color=SEMANTIC_COLORS["primary"], width=3), marker=dict(size=6), hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>"))
+    fig = apply_plotly_theme(fig, title="Produção diária do SAMU", subtitle="", yaxis_title="Atendimentos", height=350, legend=False)
+    plot(fig, "samu_evolucao_diaria")
+    section_end()
+
+    section_start("Top procedimentos", "Maiores volumes no período filtrado")
+    top_proc = procedimentos_total.head(10).copy()
+    if not top_proc.empty:
+        fig2 = px.bar(top_proc.sort_values("Atendimentos", ascending=True), x="Atendimentos", y="Descricao", orientation="h", color_discrete_sequence=[SEMANTIC_COLORS["primary_soft"]])
+        fig2.update_traces(hovertemplate="<b>%{y}</b><br>%{x:,.0f}<extra></extra>")
+        fig2 = apply_plotly_theme(fig2, title="Top 10 procedimentos", subtitle="", yaxis_title="", height=420, legend=False)
+        fig2.update_xaxes(title_text="Atendimentos")
+        plot(fig2, "samu_top_procedimentos")
+    else:
+        st.info("Sem dados de procedimentos para o período selecionado.")
+    section_end()
+
+    section_start("Gráficos por indicador", "Evolução diária individual de cada indicador da aba SAMU")
+    indicadores_ordenados = procedimentos_total[["Descricao", "Codigo_SIGTAP", "Atendimentos"]].copy()
+    indicadores_ordenados = indicadores_ordenados.sort_values("Atendimentos", ascending=False).reset_index(drop=True)
+
+    if indicadores_ordenados.empty:
+        st.info("Sem indicadores com produção no período selecionado.")
+    else:
+        for idx, row in indicadores_ordenados.iterrows():
+            descricao = str(row.get("Descricao", "Indicador"))
+            codigo_sigtap = row.get("Codigo_SIGTAP")
+            codigo_txt = str(codigo_sigtap) if pd.notna(codigo_sigtap) else "-"
+
+            serie_indicador = (
+                diario_filtrado[diario_filtrado["Descricao"] == descricao]
+                .groupby("Data", as_index=False)["Atendimentos"]
+                .sum()
+                .sort_values("Data")
+            )
+
+            if serie_indicador.empty:
+                continue
+
+            total_ind = float(serie_indicador["Atendimentos"].sum())
+            media_ind = float(serie_indicador["Atendimentos"].mean())
+            melhor_ind = float(serie_indicador["Atendimentos"].max())
+
+            st.markdown(f"#### {idx + 1}. {descricao}")
+            st.caption(
+                f"SIGTAP: {codigo_txt} · Total: {int(total_ind):,} · Média diária: {media_ind:,.1f} · Pico diário: {int(melhor_ind):,}".replace(",", ".")
+            )
+
+            fig_ind = go.Figure()
+            fig_ind.add_trace(
+                go.Scatter(
+                    x=serie_indicador["Data"],
+                    y=serie_indicador["Atendimentos"],
+                    mode="lines+markers",
+                    line=dict(color=SEMANTIC_COLORS["series_2"], width=2.8),
+                    marker=dict(size=6, color=SEMANTIC_COLORS["series_2"]),
+                    hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>",
+                )
+            )
+            fig_ind = apply_plotly_theme(
+                fig_ind,
+                title=f"{descricao}",
+                subtitle="",
+                yaxis_title="Atendimentos",
+                height=300,
+                legend=False,
+            )
+            plot(fig_ind, f"samu_indicador_{idx}")
+            st.divider()
+    section_end()
+
+    section_start("Resumo por procedimento", "Totais do período e colunas de meta da aba SAMU")
+    resumo_periodo = procedimentos_total.rename(columns={"Atendimentos": "Total_Periodo"})
+    tabela_resumo = resumo_periodo.merge(resumo[["Descricao", "Codigo_SIGTAP", "Meta", "Falta", "Eficacia"]], on=["Descricao", "Codigo_SIGTAP"], how="left")
+    tabela_resumo = tabela_resumo.sort_values("Total_Periodo", ascending=False).reset_index(drop=True)
+
+    if "Eficacia" in tabela_resumo.columns:
+        tabela_resumo["Eficacia_pct"] = (pd.to_numeric(tabela_resumo["Eficacia"], errors="coerce") * 100).round(1)
+    else:
+        tabela_resumo["Eficacia_pct"] = pd.NA
+
+    st.dataframe(tabela_resumo[["Descricao", "Codigo_SIGTAP", "Total_Periodo", "Meta", "Falta", "Eficacia_pct"]].rename(columns={"Descricao": "Descrição", "Codigo_SIGTAP": "Cód. SIGTAP", "Total_Periodo": "Total no período", "Meta": "Meta", "Falta": "Falta", "Eficacia_pct": "% Eficácia"}), use_container_width=True)
+    section_end()
+
+
 st.sidebar.markdown('<div class="sidebar-group-label">Unidades</div>', unsafe_allow_html=True)
 for page in paginas_unidades:
     if page not in paginas_disponiveis:
@@ -3988,6 +4437,152 @@ for page in paginas_unidades:
     ):
         st.session_state["pagina_selecionada"] = page
 
+
+
+def render_samu_page():
+    samu = load_samu_data()
+    diario = samu["diario"].copy()
+    resumo = samu["resumo"].copy()
+    titulo = samu.get("titulo", "SAMU")
+
+    st.markdown("## 🚨 SAMU")
+
+    if diario.empty and resumo.empty:
+        st.warning("A aba SAMU não foi encontrada ou está vazia na planilha.")
+        return
+
+    data_min = diario["Data"].dropna().min().date() if "Data" in diario.columns and not diario["Data"].dropna().empty else None
+    data_max = diario["Data"].dropna().max().date() if "Data" in diario.columns and not diario["Data"].dropna().empty else None
+
+    st.markdown("#### Filtros")
+    if data_min and data_max:
+        periodo = st.date_input("Período", value=(data_min, data_max), min_value=data_min, max_value=data_max, key="samu_periodo")
+    else:
+        periodo = None
+
+    st.caption(f"Fonte: {titulo}")
+    st.divider()
+
+    diario_filtrado = diario.copy()
+    if periodo is not None and not diario_filtrado.empty:
+        if isinstance(periodo, (list, tuple)) and len(periodo) == 2:
+            ini = pd.to_datetime(periodo[0])
+            fim = pd.to_datetime(periodo[1])
+            diario_filtrado = diario_filtrado[(diario_filtrado["Data"] >= ini) & (diario_filtrado["Data"] <= fim)].copy()
+        elif isinstance(periodo, dt.date):
+            alvo = pd.to_datetime(periodo)
+            diario_filtrado = diario_filtrado[diario_filtrado["Data"] == alvo].copy()
+
+    if diario_filtrado.empty:
+        st.info("Sem dados do SAMU para o período selecionado.")
+        return
+
+    diario_total = diario_filtrado.groupby("Data", as_index=False)["Atendimentos"].sum().sort_values("Data")
+    procedimentos_total = diario_filtrado.groupby(["Descricao", "Codigo_SIGTAP"], as_index=False)["Atendimentos"].sum().sort_values("Atendimentos", ascending=False)
+
+    total_periodo = float(diario_filtrado["Atendimentos"].sum())
+    media_diaria = float(diario_total["Atendimentos"].mean()) if not diario_total.empty else 0.0
+    melhor_dia = float(diario_total["Atendimentos"].max()) if not diario_total.empty else 0.0
+    melhor_data = diario_total.loc[diario_total["Atendimentos"].idxmax(), "Data"].strftime("%d/%m/%Y") if not diario_total.empty else "-"
+    procedimentos_ativos = int(procedimentos_total["Descricao"].nunique())
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        top_kpi_card("Total no período", f"{int(total_periodo):,}".replace(",", "."), icon="📈", subtitle="Soma dos atendimentos", accent_color=SEMANTIC_COLORS["success"], subtitle_color=SEMANTIC_COLORS["success"])
+    with k2:
+        top_kpi_card("Média diária", f"{media_diaria:,.1f}".replace(",", "."), icon="📆", subtitle="Atendimentos por dia", accent_color=SEMANTIC_COLORS["primary"], subtitle_color=SEMANTIC_COLORS["primary"])
+    with k3:
+        top_kpi_card("Melhor dia", f"{int(melhor_dia):,}".replace(",", "."), icon="🏆", subtitle=f"Data: {melhor_data}", accent_color=SEMANTIC_COLORS["warning"], subtitle_color=SEMANTIC_COLORS["warning"])
+    with k4:
+        top_kpi_card("Procedimentos ativos", f"{procedimentos_ativos}", icon="🧾", subtitle="Com produção no período", accent_color=SEMANTIC_COLORS["danger"], subtitle_color=SEMANTIC_COLORS["danger"])
+
+    section_start("Evolução diária", "Atendimentos totais por dia")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=diario_total["Data"], y=diario_total["Atendimentos"], mode="lines+markers", line=dict(color=SEMANTIC_COLORS["primary"], width=3), marker=dict(size=6), hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>"))
+    fig = apply_plotly_theme(fig, title="Produção diária do SAMU", subtitle="", yaxis_title="Atendimentos", height=350, legend=False)
+    plot(fig, "samu_evolucao_diaria")
+    section_end()
+
+    section_start("Top procedimentos", "Maiores volumes no período filtrado")
+    top_proc = procedimentos_total.head(10).copy()
+    if not top_proc.empty:
+        fig2 = px.bar(top_proc.sort_values("Atendimentos", ascending=True), x="Atendimentos", y="Descricao", orientation="h", color_discrete_sequence=[SEMANTIC_COLORS["primary_soft"]])
+        fig2.update_traces(hovertemplate="<b>%{y}</b><br>%{x:,.0f}<extra></extra>")
+        fig2 = apply_plotly_theme(fig2, title="Top 10 procedimentos", subtitle="", yaxis_title="", height=420, legend=False)
+        fig2.update_xaxes(title_text="Atendimentos")
+        plot(fig2, "samu_top_procedimentos")
+    else:
+        st.info("Sem dados de procedimentos para o período selecionado.")
+    section_end()
+
+    section_start("Gráficos por indicador", "Evolução diária individual de cada indicador da aba SAMU")
+    indicadores_ordenados = procedimentos_total[["Descricao", "Codigo_SIGTAP", "Atendimentos"]].copy()
+    indicadores_ordenados = indicadores_ordenados.sort_values("Atendimentos", ascending=False).reset_index(drop=True)
+
+    if indicadores_ordenados.empty:
+        st.info("Sem indicadores com produção no período selecionado.")
+    else:
+        for idx, row in indicadores_ordenados.iterrows():
+            descricao = str(row.get("Descricao", "Indicador"))
+            codigo_sigtap = row.get("Codigo_SIGTAP")
+            codigo_txt = str(codigo_sigtap) if pd.notna(codigo_sigtap) else "-"
+
+            serie_indicador = (
+                diario_filtrado[diario_filtrado["Descricao"] == descricao]
+                .groupby("Data", as_index=False)["Atendimentos"]
+                .sum()
+                .sort_values("Data")
+            )
+
+            if serie_indicador.empty:
+                continue
+
+            total_ind = float(serie_indicador["Atendimentos"].sum())
+            media_ind = float(serie_indicador["Atendimentos"].mean())
+            melhor_ind = float(serie_indicador["Atendimentos"].max())
+
+            st.markdown(f"#### {idx + 1}. {descricao}")
+            st.caption(
+                f"SIGTAP: {codigo_txt} · Total: {int(total_ind):,} · Média diária: {media_ind:,.1f} · Pico diário: {int(melhor_ind):,}".replace(",", ".")
+            )
+
+            fig_ind = go.Figure()
+            fig_ind.add_trace(
+                go.Scatter(
+                    x=serie_indicador["Data"],
+                    y=serie_indicador["Atendimentos"],
+                    mode="lines+markers",
+                    line=dict(color=SEMANTIC_COLORS["series_2"], width=2.8),
+                    marker=dict(size=6, color=SEMANTIC_COLORS["series_2"]),
+                    hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>",
+                )
+            )
+            fig_ind = apply_plotly_theme(
+                fig_ind,
+                title=f"{descricao}",
+                subtitle="",
+                yaxis_title="Atendimentos",
+                height=300,
+                legend=False,
+            )
+            plot(fig_ind, f"samu_indicador_{idx}")
+            st.divider()
+    section_end()
+
+    section_start("Resumo por procedimento", "Totais do período e colunas de meta da aba SAMU")
+    resumo_periodo = procedimentos_total.rename(columns={"Atendimentos": "Total_Periodo"})
+    tabela_resumo = resumo_periodo.merge(resumo[["Descricao", "Codigo_SIGTAP", "Meta", "Falta", "Eficacia"]], on=["Descricao", "Codigo_SIGTAP"], how="left")
+    tabela_resumo = tabela_resumo.sort_values("Total_Periodo", ascending=False).reset_index(drop=True)
+
+    if "Eficacia" in tabela_resumo.columns:
+        tabela_resumo["Eficacia_pct"] = (pd.to_numeric(tabela_resumo["Eficacia"], errors="coerce") * 100).round(1)
+    else:
+        tabela_resumo["Eficacia_pct"] = pd.NA
+
+    st.dataframe(tabela_resumo[["Descricao", "Codigo_SIGTAP", "Total_Periodo", "Meta", "Falta", "Eficacia_pct"]].rename(columns={"Descricao": "Descrição", "Codigo_SIGTAP": "Cód. SIGTAP", "Total_Periodo": "Total no período", "Meta": "Meta", "Falta": "Falta", "Eficacia_pct": "% Eficácia"}), use_container_width=True)
+    section_end()
+
+
 st.sidebar.markdown('<div class="sidebar-group-label">Unidades basicas</div>', unsafe_allow_html=True)
 for page in paginas_basicas:
     if page not in paginas_disponiveis:
@@ -4000,6 +4595,152 @@ for page in paginas_basicas:
         type="primary" if active else "secondary"
     ):
         st.session_state["pagina_selecionada"] = page
+
+
+
+def render_samu_page():
+    samu = load_samu_data()
+    diario = samu["diario"].copy()
+    resumo = samu["resumo"].copy()
+    titulo = samu.get("titulo", "SAMU")
+
+    st.markdown("## 🚨 SAMU")
+
+    if diario.empty and resumo.empty:
+        st.warning("A aba SAMU não foi encontrada ou está vazia na planilha.")
+        return
+
+    data_min = diario["Data"].dropna().min().date() if "Data" in diario.columns and not diario["Data"].dropna().empty else None
+    data_max = diario["Data"].dropna().max().date() if "Data" in diario.columns and not diario["Data"].dropna().empty else None
+
+    st.markdown("#### Filtros")
+    if data_min and data_max:
+        periodo = st.date_input("Período", value=(data_min, data_max), min_value=data_min, max_value=data_max, key="samu_periodo")
+    else:
+        periodo = None
+
+    st.caption(f"Fonte: {titulo}")
+    st.divider()
+
+    diario_filtrado = diario.copy()
+    if periodo is not None and not diario_filtrado.empty:
+        if isinstance(periodo, (list, tuple)) and len(periodo) == 2:
+            ini = pd.to_datetime(periodo[0])
+            fim = pd.to_datetime(periodo[1])
+            diario_filtrado = diario_filtrado[(diario_filtrado["Data"] >= ini) & (diario_filtrado["Data"] <= fim)].copy()
+        elif isinstance(periodo, dt.date):
+            alvo = pd.to_datetime(periodo)
+            diario_filtrado = diario_filtrado[diario_filtrado["Data"] == alvo].copy()
+
+    if diario_filtrado.empty:
+        st.info("Sem dados do SAMU para o período selecionado.")
+        return
+
+    diario_total = diario_filtrado.groupby("Data", as_index=False)["Atendimentos"].sum().sort_values("Data")
+    procedimentos_total = diario_filtrado.groupby(["Descricao", "Codigo_SIGTAP"], as_index=False)["Atendimentos"].sum().sort_values("Atendimentos", ascending=False)
+
+    total_periodo = float(diario_filtrado["Atendimentos"].sum())
+    media_diaria = float(diario_total["Atendimentos"].mean()) if not diario_total.empty else 0.0
+    melhor_dia = float(diario_total["Atendimentos"].max()) if not diario_total.empty else 0.0
+    melhor_data = diario_total.loc[diario_total["Atendimentos"].idxmax(), "Data"].strftime("%d/%m/%Y") if not diario_total.empty else "-"
+    procedimentos_ativos = int(procedimentos_total["Descricao"].nunique())
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        top_kpi_card("Total no período", f"{int(total_periodo):,}".replace(",", "."), icon="📈", subtitle="Soma dos atendimentos", accent_color=SEMANTIC_COLORS["success"], subtitle_color=SEMANTIC_COLORS["success"])
+    with k2:
+        top_kpi_card("Média diária", f"{media_diaria:,.1f}".replace(",", "."), icon="📆", subtitle="Atendimentos por dia", accent_color=SEMANTIC_COLORS["primary"], subtitle_color=SEMANTIC_COLORS["primary"])
+    with k3:
+        top_kpi_card("Melhor dia", f"{int(melhor_dia):,}".replace(",", "."), icon="🏆", subtitle=f"Data: {melhor_data}", accent_color=SEMANTIC_COLORS["warning"], subtitle_color=SEMANTIC_COLORS["warning"])
+    with k4:
+        top_kpi_card("Procedimentos ativos", f"{procedimentos_ativos}", icon="🧾", subtitle="Com produção no período", accent_color=SEMANTIC_COLORS["danger"], subtitle_color=SEMANTIC_COLORS["danger"])
+
+    section_start("Evolução diária", "Atendimentos totais por dia")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=diario_total["Data"], y=diario_total["Atendimentos"], mode="lines+markers", line=dict(color=SEMANTIC_COLORS["primary"], width=3), marker=dict(size=6), hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>"))
+    fig = apply_plotly_theme(fig, title="Produção diária do SAMU", subtitle="", yaxis_title="Atendimentos", height=350, legend=False)
+    plot(fig, "samu_evolucao_diaria")
+    section_end()
+
+    section_start("Top procedimentos", "Maiores volumes no período filtrado")
+    top_proc = procedimentos_total.head(10).copy()
+    if not top_proc.empty:
+        fig2 = px.bar(top_proc.sort_values("Atendimentos", ascending=True), x="Atendimentos", y="Descricao", orientation="h", color_discrete_sequence=[SEMANTIC_COLORS["primary_soft"]])
+        fig2.update_traces(hovertemplate="<b>%{y}</b><br>%{x:,.0f}<extra></extra>")
+        fig2 = apply_plotly_theme(fig2, title="Top 10 procedimentos", subtitle="", yaxis_title="", height=420, legend=False)
+        fig2.update_xaxes(title_text="Atendimentos")
+        plot(fig2, "samu_top_procedimentos")
+    else:
+        st.info("Sem dados de procedimentos para o período selecionado.")
+    section_end()
+
+    section_start("Gráficos por indicador", "Evolução diária individual de cada indicador da aba SAMU")
+    indicadores_ordenados = procedimentos_total[["Descricao", "Codigo_SIGTAP", "Atendimentos"]].copy()
+    indicadores_ordenados = indicadores_ordenados.sort_values("Atendimentos", ascending=False).reset_index(drop=True)
+
+    if indicadores_ordenados.empty:
+        st.info("Sem indicadores com produção no período selecionado.")
+    else:
+        for idx, row in indicadores_ordenados.iterrows():
+            descricao = str(row.get("Descricao", "Indicador"))
+            codigo_sigtap = row.get("Codigo_SIGTAP")
+            codigo_txt = str(codigo_sigtap) if pd.notna(codigo_sigtap) else "-"
+
+            serie_indicador = (
+                diario_filtrado[diario_filtrado["Descricao"] == descricao]
+                .groupby("Data", as_index=False)["Atendimentos"]
+                .sum()
+                .sort_values("Data")
+            )
+
+            if serie_indicador.empty:
+                continue
+
+            total_ind = float(serie_indicador["Atendimentos"].sum())
+            media_ind = float(serie_indicador["Atendimentos"].mean())
+            melhor_ind = float(serie_indicador["Atendimentos"].max())
+
+            st.markdown(f"#### {idx + 1}. {descricao}")
+            st.caption(
+                f"SIGTAP: {codigo_txt} · Total: {int(total_ind):,} · Média diária: {media_ind:,.1f} · Pico diário: {int(melhor_ind):,}".replace(",", ".")
+            )
+
+            fig_ind = go.Figure()
+            fig_ind.add_trace(
+                go.Scatter(
+                    x=serie_indicador["Data"],
+                    y=serie_indicador["Atendimentos"],
+                    mode="lines+markers",
+                    line=dict(color=SEMANTIC_COLORS["series_2"], width=2.8),
+                    marker=dict(size=6, color=SEMANTIC_COLORS["series_2"]),
+                    hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>",
+                )
+            )
+            fig_ind = apply_plotly_theme(
+                fig_ind,
+                title=f"{descricao}",
+                subtitle="",
+                yaxis_title="Atendimentos",
+                height=300,
+                legend=False,
+            )
+            plot(fig_ind, f"samu_indicador_{idx}")
+            st.divider()
+    section_end()
+
+    section_start("Resumo por procedimento", "Totais do período e colunas de meta da aba SAMU")
+    resumo_periodo = procedimentos_total.rename(columns={"Atendimentos": "Total_Periodo"})
+    tabela_resumo = resumo_periodo.merge(resumo[["Descricao", "Codigo_SIGTAP", "Meta", "Falta", "Eficacia"]], on=["Descricao", "Codigo_SIGTAP"], how="left")
+    tabela_resumo = tabela_resumo.sort_values("Total_Periodo", ascending=False).reset_index(drop=True)
+
+    if "Eficacia" in tabela_resumo.columns:
+        tabela_resumo["Eficacia_pct"] = (pd.to_numeric(tabela_resumo["Eficacia"], errors="coerce") * 100).round(1)
+    else:
+        tabela_resumo["Eficacia_pct"] = pd.NA
+
+    st.dataframe(tabela_resumo[["Descricao", "Codigo_SIGTAP", "Total_Periodo", "Meta", "Falta", "Eficacia_pct"]].rename(columns={"Descricao": "Descrição", "Codigo_SIGTAP": "Cód. SIGTAP", "Total_Periodo": "Total no período", "Meta": "Meta", "Falta": "Falta", "Eficacia_pct": "% Eficácia"}), use_container_width=True)
+    section_end()
+
 
 st.sidebar.markdown('<div class="sidebar-group-label">Administrativo</div>', unsafe_allow_html=True)
 for page in paginas_administrativo:
@@ -4027,6 +4768,152 @@ if st.session_state.get("last_audit_page") != pagina or st.session_state.get("la
     st.session_state["last_audit_page"] = pagina
     st.session_state["last_audit_user"] = usuario_logado
 
+
+
+def render_samu_page():
+    samu = load_samu_data()
+    diario = samu["diario"].copy()
+    resumo = samu["resumo"].copy()
+    titulo = samu.get("titulo", "SAMU")
+
+    st.markdown("## 🚨 SAMU")
+
+    if diario.empty and resumo.empty:
+        st.warning("A aba SAMU não foi encontrada ou está vazia na planilha.")
+        return
+
+    data_min = diario["Data"].dropna().min().date() if "Data" in diario.columns and not diario["Data"].dropna().empty else None
+    data_max = diario["Data"].dropna().max().date() if "Data" in diario.columns and not diario["Data"].dropna().empty else None
+
+    st.markdown("#### Filtros")
+    if data_min and data_max:
+        periodo = st.date_input("Período", value=(data_min, data_max), min_value=data_min, max_value=data_max, key="samu_periodo")
+    else:
+        periodo = None
+
+    st.caption(f"Fonte: {titulo}")
+    st.divider()
+
+    diario_filtrado = diario.copy()
+    if periodo is not None and not diario_filtrado.empty:
+        if isinstance(periodo, (list, tuple)) and len(periodo) == 2:
+            ini = pd.to_datetime(periodo[0])
+            fim = pd.to_datetime(periodo[1])
+            diario_filtrado = diario_filtrado[(diario_filtrado["Data"] >= ini) & (diario_filtrado["Data"] <= fim)].copy()
+        elif isinstance(periodo, dt.date):
+            alvo = pd.to_datetime(periodo)
+            diario_filtrado = diario_filtrado[diario_filtrado["Data"] == alvo].copy()
+
+    if diario_filtrado.empty:
+        st.info("Sem dados do SAMU para o período selecionado.")
+        return
+
+    diario_total = diario_filtrado.groupby("Data", as_index=False)["Atendimentos"].sum().sort_values("Data")
+    procedimentos_total = diario_filtrado.groupby(["Descricao", "Codigo_SIGTAP"], as_index=False)["Atendimentos"].sum().sort_values("Atendimentos", ascending=False)
+
+    total_periodo = float(diario_filtrado["Atendimentos"].sum())
+    media_diaria = float(diario_total["Atendimentos"].mean()) if not diario_total.empty else 0.0
+    melhor_dia = float(diario_total["Atendimentos"].max()) if not diario_total.empty else 0.0
+    melhor_data = diario_total.loc[diario_total["Atendimentos"].idxmax(), "Data"].strftime("%d/%m/%Y") if not diario_total.empty else "-"
+    procedimentos_ativos = int(procedimentos_total["Descricao"].nunique())
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        top_kpi_card("Total no período", f"{int(total_periodo):,}".replace(",", "."), icon="📈", subtitle="Soma dos atendimentos", accent_color=SEMANTIC_COLORS["success"], subtitle_color=SEMANTIC_COLORS["success"])
+    with k2:
+        top_kpi_card("Média diária", f"{media_diaria:,.1f}".replace(",", "."), icon="📆", subtitle="Atendimentos por dia", accent_color=SEMANTIC_COLORS["primary"], subtitle_color=SEMANTIC_COLORS["primary"])
+    with k3:
+        top_kpi_card("Melhor dia", f"{int(melhor_dia):,}".replace(",", "."), icon="🏆", subtitle=f"Data: {melhor_data}", accent_color=SEMANTIC_COLORS["warning"], subtitle_color=SEMANTIC_COLORS["warning"])
+    with k4:
+        top_kpi_card("Procedimentos ativos", f"{procedimentos_ativos}", icon="🧾", subtitle="Com produção no período", accent_color=SEMANTIC_COLORS["danger"], subtitle_color=SEMANTIC_COLORS["danger"])
+
+    section_start("Evolução diária", "Atendimentos totais por dia")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=diario_total["Data"], y=diario_total["Atendimentos"], mode="lines+markers", line=dict(color=SEMANTIC_COLORS["primary"], width=3), marker=dict(size=6), hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>"))
+    fig = apply_plotly_theme(fig, title="Produção diária do SAMU", subtitle="", yaxis_title="Atendimentos", height=350, legend=False)
+    plot(fig, "samu_evolucao_diaria")
+    section_end()
+
+    section_start("Top procedimentos", "Maiores volumes no período filtrado")
+    top_proc = procedimentos_total.head(10).copy()
+    if not top_proc.empty:
+        fig2 = px.bar(top_proc.sort_values("Atendimentos", ascending=True), x="Atendimentos", y="Descricao", orientation="h", color_discrete_sequence=[SEMANTIC_COLORS["primary_soft"]])
+        fig2.update_traces(hovertemplate="<b>%{y}</b><br>%{x:,.0f}<extra></extra>")
+        fig2 = apply_plotly_theme(fig2, title="Top 10 procedimentos", subtitle="", yaxis_title="", height=420, legend=False)
+        fig2.update_xaxes(title_text="Atendimentos")
+        plot(fig2, "samu_top_procedimentos")
+    else:
+        st.info("Sem dados de procedimentos para o período selecionado.")
+    section_end()
+
+    section_start("Gráficos por indicador", "Evolução diária individual de cada indicador da aba SAMU")
+    indicadores_ordenados = procedimentos_total[["Descricao", "Codigo_SIGTAP", "Atendimentos"]].copy()
+    indicadores_ordenados = indicadores_ordenados.sort_values("Atendimentos", ascending=False).reset_index(drop=True)
+
+    if indicadores_ordenados.empty:
+        st.info("Sem indicadores com produção no período selecionado.")
+    else:
+        for idx, row in indicadores_ordenados.iterrows():
+            descricao = str(row.get("Descricao", "Indicador"))
+            codigo_sigtap = row.get("Codigo_SIGTAP")
+            codigo_txt = str(codigo_sigtap) if pd.notna(codigo_sigtap) else "-"
+
+            serie_indicador = (
+                diario_filtrado[diario_filtrado["Descricao"] == descricao]
+                .groupby("Data", as_index=False)["Atendimentos"]
+                .sum()
+                .sort_values("Data")
+            )
+
+            if serie_indicador.empty:
+                continue
+
+            total_ind = float(serie_indicador["Atendimentos"].sum())
+            media_ind = float(serie_indicador["Atendimentos"].mean())
+            melhor_ind = float(serie_indicador["Atendimentos"].max())
+
+            st.markdown(f"#### {idx + 1}. {descricao}")
+            st.caption(
+                f"SIGTAP: {codigo_txt} · Total: {int(total_ind):,} · Média diária: {media_ind:,.1f} · Pico diário: {int(melhor_ind):,}".replace(",", ".")
+            )
+
+            fig_ind = go.Figure()
+            fig_ind.add_trace(
+                go.Scatter(
+                    x=serie_indicador["Data"],
+                    y=serie_indicador["Atendimentos"],
+                    mode="lines+markers",
+                    line=dict(color=SEMANTIC_COLORS["series_2"], width=2.8),
+                    marker=dict(size=6, color=SEMANTIC_COLORS["series_2"]),
+                    hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>",
+                )
+            )
+            fig_ind = apply_plotly_theme(
+                fig_ind,
+                title=f"{descricao}",
+                subtitle="",
+                yaxis_title="Atendimentos",
+                height=300,
+                legend=False,
+            )
+            plot(fig_ind, f"samu_indicador_{idx}")
+            st.divider()
+    section_end()
+
+    section_start("Resumo por procedimento", "Totais do período e colunas de meta da aba SAMU")
+    resumo_periodo = procedimentos_total.rename(columns={"Atendimentos": "Total_Periodo"})
+    tabela_resumo = resumo_periodo.merge(resumo[["Descricao", "Codigo_SIGTAP", "Meta", "Falta", "Eficacia"]], on=["Descricao", "Codigo_SIGTAP"], how="left")
+    tabela_resumo = tabela_resumo.sort_values("Total_Periodo", ascending=False).reset_index(drop=True)
+
+    if "Eficacia" in tabela_resumo.columns:
+        tabela_resumo["Eficacia_pct"] = (pd.to_numeric(tabela_resumo["Eficacia"], errors="coerce") * 100).round(1)
+    else:
+        tabela_resumo["Eficacia_pct"] = pd.NA
+
+    st.dataframe(tabela_resumo[["Descricao", "Codigo_SIGTAP", "Total_Periodo", "Meta", "Falta", "Eficacia_pct"]].rename(columns={"Descricao": "Descrição", "Codigo_SIGTAP": "Cód. SIGTAP", "Total_Periodo": "Total no período", "Meta": "Meta", "Falta": "Falta", "Eficacia_pct": "% Eficácia"}), use_container_width=True)
+    section_end()
+
+
 st.sidebar.markdown("## Filtros")
 default_periodo = default_previous_month_selection()
 if "meses_selecionados" not in st.session_state:
@@ -4037,6 +4924,152 @@ meses_selecionados = st.sidebar.multiselect(
     [MESES_LABEL[m] for m in MESES],
     key="meses_selecionados"
 )
+
+
+
+def render_samu_page():
+    samu = load_samu_data()
+    diario = samu["diario"].copy()
+    resumo = samu["resumo"].copy()
+    titulo = samu.get("titulo", "SAMU")
+
+    st.markdown("## 🚨 SAMU")
+
+    if diario.empty and resumo.empty:
+        st.warning("A aba SAMU não foi encontrada ou está vazia na planilha.")
+        return
+
+    data_min = diario["Data"].dropna().min().date() if "Data" in diario.columns and not diario["Data"].dropna().empty else None
+    data_max = diario["Data"].dropna().max().date() if "Data" in diario.columns and not diario["Data"].dropna().empty else None
+
+    st.markdown("#### Filtros")
+    if data_min and data_max:
+        periodo = st.date_input("Período", value=(data_min, data_max), min_value=data_min, max_value=data_max, key="samu_periodo")
+    else:
+        periodo = None
+
+    st.caption(f"Fonte: {titulo}")
+    st.divider()
+
+    diario_filtrado = diario.copy()
+    if periodo is not None and not diario_filtrado.empty:
+        if isinstance(periodo, (list, tuple)) and len(periodo) == 2:
+            ini = pd.to_datetime(periodo[0])
+            fim = pd.to_datetime(periodo[1])
+            diario_filtrado = diario_filtrado[(diario_filtrado["Data"] >= ini) & (diario_filtrado["Data"] <= fim)].copy()
+        elif isinstance(periodo, dt.date):
+            alvo = pd.to_datetime(periodo)
+            diario_filtrado = diario_filtrado[diario_filtrado["Data"] == alvo].copy()
+
+    if diario_filtrado.empty:
+        st.info("Sem dados do SAMU para o período selecionado.")
+        return
+
+    diario_total = diario_filtrado.groupby("Data", as_index=False)["Atendimentos"].sum().sort_values("Data")
+    procedimentos_total = diario_filtrado.groupby(["Descricao", "Codigo_SIGTAP"], as_index=False)["Atendimentos"].sum().sort_values("Atendimentos", ascending=False)
+
+    total_periodo = float(diario_filtrado["Atendimentos"].sum())
+    media_diaria = float(diario_total["Atendimentos"].mean()) if not diario_total.empty else 0.0
+    melhor_dia = float(diario_total["Atendimentos"].max()) if not diario_total.empty else 0.0
+    melhor_data = diario_total.loc[diario_total["Atendimentos"].idxmax(), "Data"].strftime("%d/%m/%Y") if not diario_total.empty else "-"
+    procedimentos_ativos = int(procedimentos_total["Descricao"].nunique())
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        top_kpi_card("Total no período", f"{int(total_periodo):,}".replace(",", "."), icon="📈", subtitle="Soma dos atendimentos", accent_color=SEMANTIC_COLORS["success"], subtitle_color=SEMANTIC_COLORS["success"])
+    with k2:
+        top_kpi_card("Média diária", f"{media_diaria:,.1f}".replace(",", "."), icon="📆", subtitle="Atendimentos por dia", accent_color=SEMANTIC_COLORS["primary"], subtitle_color=SEMANTIC_COLORS["primary"])
+    with k3:
+        top_kpi_card("Melhor dia", f"{int(melhor_dia):,}".replace(",", "."), icon="🏆", subtitle=f"Data: {melhor_data}", accent_color=SEMANTIC_COLORS["warning"], subtitle_color=SEMANTIC_COLORS["warning"])
+    with k4:
+        top_kpi_card("Procedimentos ativos", f"{procedimentos_ativos}", icon="🧾", subtitle="Com produção no período", accent_color=SEMANTIC_COLORS["danger"], subtitle_color=SEMANTIC_COLORS["danger"])
+
+    section_start("Evolução diária", "Atendimentos totais por dia")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=diario_total["Data"], y=diario_total["Atendimentos"], mode="lines+markers", line=dict(color=SEMANTIC_COLORS["primary"], width=3), marker=dict(size=6), hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>"))
+    fig = apply_plotly_theme(fig, title="Produção diária do SAMU", subtitle="", yaxis_title="Atendimentos", height=350, legend=False)
+    plot(fig, "samu_evolucao_diaria")
+    section_end()
+
+    section_start("Top procedimentos", "Maiores volumes no período filtrado")
+    top_proc = procedimentos_total.head(10).copy()
+    if not top_proc.empty:
+        fig2 = px.bar(top_proc.sort_values("Atendimentos", ascending=True), x="Atendimentos", y="Descricao", orientation="h", color_discrete_sequence=[SEMANTIC_COLORS["primary_soft"]])
+        fig2.update_traces(hovertemplate="<b>%{y}</b><br>%{x:,.0f}<extra></extra>")
+        fig2 = apply_plotly_theme(fig2, title="Top 10 procedimentos", subtitle="", yaxis_title="", height=420, legend=False)
+        fig2.update_xaxes(title_text="Atendimentos")
+        plot(fig2, "samu_top_procedimentos")
+    else:
+        st.info("Sem dados de procedimentos para o período selecionado.")
+    section_end()
+
+    section_start("Gráficos por indicador", "Evolução diária individual de cada indicador da aba SAMU")
+    indicadores_ordenados = procedimentos_total[["Descricao", "Codigo_SIGTAP", "Atendimentos"]].copy()
+    indicadores_ordenados = indicadores_ordenados.sort_values("Atendimentos", ascending=False).reset_index(drop=True)
+
+    if indicadores_ordenados.empty:
+        st.info("Sem indicadores com produção no período selecionado.")
+    else:
+        for idx, row in indicadores_ordenados.iterrows():
+            descricao = str(row.get("Descricao", "Indicador"))
+            codigo_sigtap = row.get("Codigo_SIGTAP")
+            codigo_txt = str(codigo_sigtap) if pd.notna(codigo_sigtap) else "-"
+
+            serie_indicador = (
+                diario_filtrado[diario_filtrado["Descricao"] == descricao]
+                .groupby("Data", as_index=False)["Atendimentos"]
+                .sum()
+                .sort_values("Data")
+            )
+
+            if serie_indicador.empty:
+                continue
+
+            total_ind = float(serie_indicador["Atendimentos"].sum())
+            media_ind = float(serie_indicador["Atendimentos"].mean())
+            melhor_ind = float(serie_indicador["Atendimentos"].max())
+
+            st.markdown(f"#### {idx + 1}. {descricao}")
+            st.caption(
+                f"SIGTAP: {codigo_txt} · Total: {int(total_ind):,} · Média diária: {media_ind:,.1f} · Pico diário: {int(melhor_ind):,}".replace(",", ".")
+            )
+
+            fig_ind = go.Figure()
+            fig_ind.add_trace(
+                go.Scatter(
+                    x=serie_indicador["Data"],
+                    y=serie_indicador["Atendimentos"],
+                    mode="lines+markers",
+                    line=dict(color=SEMANTIC_COLORS["series_2"], width=2.8),
+                    marker=dict(size=6, color=SEMANTIC_COLORS["series_2"]),
+                    hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>",
+                )
+            )
+            fig_ind = apply_plotly_theme(
+                fig_ind,
+                title=f"{descricao}",
+                subtitle="",
+                yaxis_title="Atendimentos",
+                height=300,
+                legend=False,
+            )
+            plot(fig_ind, f"samu_indicador_{idx}")
+            st.divider()
+    section_end()
+
+    section_start("Resumo por procedimento", "Totais do período e colunas de meta da aba SAMU")
+    resumo_periodo = procedimentos_total.rename(columns={"Atendimentos": "Total_Periodo"})
+    tabela_resumo = resumo_periodo.merge(resumo[["Descricao", "Codigo_SIGTAP", "Meta", "Falta", "Eficacia"]], on=["Descricao", "Codigo_SIGTAP"], how="left")
+    tabela_resumo = tabela_resumo.sort_values("Total_Periodo", ascending=False).reset_index(drop=True)
+
+    if "Eficacia" in tabela_resumo.columns:
+        tabela_resumo["Eficacia_pct"] = (pd.to_numeric(tabela_resumo["Eficacia"], errors="coerce") * 100).round(1)
+    else:
+        tabela_resumo["Eficacia_pct"] = pd.NA
+
+    st.dataframe(tabela_resumo[["Descricao", "Codigo_SIGTAP", "Total_Periodo", "Meta", "Falta", "Eficacia_pct"]].rename(columns={"Descricao": "Descrição", "Codigo_SIGTAP": "Cód. SIGTAP", "Total_Periodo": "Total no período", "Meta": "Meta", "Falta": "Falta", "Eficacia_pct": "% Eficácia"}), use_container_width=True)
+    section_end()
+
 
 st.sidebar.markdown("### Atualizar base")
 upload_col1, upload_col2 = st.sidebar.columns([1, 1])
@@ -4086,6 +5119,152 @@ if data.empty:
         st.info("Nenhum arquivo Excel foi encontrado na mesma pasta do app.")
     st.stop()
 
+
+
+def render_samu_page():
+    samu = load_samu_data()
+    diario = samu["diario"].copy()
+    resumo = samu["resumo"].copy()
+    titulo = samu.get("titulo", "SAMU")
+
+    st.markdown("## 🚨 SAMU")
+
+    if diario.empty and resumo.empty:
+        st.warning("A aba SAMU não foi encontrada ou está vazia na planilha.")
+        return
+
+    data_min = diario["Data"].dropna().min().date() if "Data" in diario.columns and not diario["Data"].dropna().empty else None
+    data_max = diario["Data"].dropna().max().date() if "Data" in diario.columns and not diario["Data"].dropna().empty else None
+
+    st.markdown("#### Filtros")
+    if data_min and data_max:
+        periodo = st.date_input("Período", value=(data_min, data_max), min_value=data_min, max_value=data_max, key="samu_periodo")
+    else:
+        periodo = None
+
+    st.caption(f"Fonte: {titulo}")
+    st.divider()
+
+    diario_filtrado = diario.copy()
+    if periodo is not None and not diario_filtrado.empty:
+        if isinstance(periodo, (list, tuple)) and len(periodo) == 2:
+            ini = pd.to_datetime(periodo[0])
+            fim = pd.to_datetime(periodo[1])
+            diario_filtrado = diario_filtrado[(diario_filtrado["Data"] >= ini) & (diario_filtrado["Data"] <= fim)].copy()
+        elif isinstance(periodo, dt.date):
+            alvo = pd.to_datetime(periodo)
+            diario_filtrado = diario_filtrado[diario_filtrado["Data"] == alvo].copy()
+
+    if diario_filtrado.empty:
+        st.info("Sem dados do SAMU para o período selecionado.")
+        return
+
+    diario_total = diario_filtrado.groupby("Data", as_index=False)["Atendimentos"].sum().sort_values("Data")
+    procedimentos_total = diario_filtrado.groupby(["Descricao", "Codigo_SIGTAP"], as_index=False)["Atendimentos"].sum().sort_values("Atendimentos", ascending=False)
+
+    total_periodo = float(diario_filtrado["Atendimentos"].sum())
+    media_diaria = float(diario_total["Atendimentos"].mean()) if not diario_total.empty else 0.0
+    melhor_dia = float(diario_total["Atendimentos"].max()) if not diario_total.empty else 0.0
+    melhor_data = diario_total.loc[diario_total["Atendimentos"].idxmax(), "Data"].strftime("%d/%m/%Y") if not diario_total.empty else "-"
+    procedimentos_ativos = int(procedimentos_total["Descricao"].nunique())
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        top_kpi_card("Total no período", f"{int(total_periodo):,}".replace(",", "."), icon="📈", subtitle="Soma dos atendimentos", accent_color=SEMANTIC_COLORS["success"], subtitle_color=SEMANTIC_COLORS["success"])
+    with k2:
+        top_kpi_card("Média diária", f"{media_diaria:,.1f}".replace(",", "."), icon="📆", subtitle="Atendimentos por dia", accent_color=SEMANTIC_COLORS["primary"], subtitle_color=SEMANTIC_COLORS["primary"])
+    with k3:
+        top_kpi_card("Melhor dia", f"{int(melhor_dia):,}".replace(",", "."), icon="🏆", subtitle=f"Data: {melhor_data}", accent_color=SEMANTIC_COLORS["warning"], subtitle_color=SEMANTIC_COLORS["warning"])
+    with k4:
+        top_kpi_card("Procedimentos ativos", f"{procedimentos_ativos}", icon="🧾", subtitle="Com produção no período", accent_color=SEMANTIC_COLORS["danger"], subtitle_color=SEMANTIC_COLORS["danger"])
+
+    section_start("Evolução diária", "Atendimentos totais por dia")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=diario_total["Data"], y=diario_total["Atendimentos"], mode="lines+markers", line=dict(color=SEMANTIC_COLORS["primary"], width=3), marker=dict(size=6), hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>"))
+    fig = apply_plotly_theme(fig, title="Produção diária do SAMU", subtitle="", yaxis_title="Atendimentos", height=350, legend=False)
+    plot(fig, "samu_evolucao_diaria")
+    section_end()
+
+    section_start("Top procedimentos", "Maiores volumes no período filtrado")
+    top_proc = procedimentos_total.head(10).copy()
+    if not top_proc.empty:
+        fig2 = px.bar(top_proc.sort_values("Atendimentos", ascending=True), x="Atendimentos", y="Descricao", orientation="h", color_discrete_sequence=[SEMANTIC_COLORS["primary_soft"]])
+        fig2.update_traces(hovertemplate="<b>%{y}</b><br>%{x:,.0f}<extra></extra>")
+        fig2 = apply_plotly_theme(fig2, title="Top 10 procedimentos", subtitle="", yaxis_title="", height=420, legend=False)
+        fig2.update_xaxes(title_text="Atendimentos")
+        plot(fig2, "samu_top_procedimentos")
+    else:
+        st.info("Sem dados de procedimentos para o período selecionado.")
+    section_end()
+
+    section_start("Gráficos por indicador", "Evolução diária individual de cada indicador da aba SAMU")
+    indicadores_ordenados = procedimentos_total[["Descricao", "Codigo_SIGTAP", "Atendimentos"]].copy()
+    indicadores_ordenados = indicadores_ordenados.sort_values("Atendimentos", ascending=False).reset_index(drop=True)
+
+    if indicadores_ordenados.empty:
+        st.info("Sem indicadores com produção no período selecionado.")
+    else:
+        for idx, row in indicadores_ordenados.iterrows():
+            descricao = str(row.get("Descricao", "Indicador"))
+            codigo_sigtap = row.get("Codigo_SIGTAP")
+            codigo_txt = str(codigo_sigtap) if pd.notna(codigo_sigtap) else "-"
+
+            serie_indicador = (
+                diario_filtrado[diario_filtrado["Descricao"] == descricao]
+                .groupby("Data", as_index=False)["Atendimentos"]
+                .sum()
+                .sort_values("Data")
+            )
+
+            if serie_indicador.empty:
+                continue
+
+            total_ind = float(serie_indicador["Atendimentos"].sum())
+            media_ind = float(serie_indicador["Atendimentos"].mean())
+            melhor_ind = float(serie_indicador["Atendimentos"].max())
+
+            st.markdown(f"#### {idx + 1}. {descricao}")
+            st.caption(
+                f"SIGTAP: {codigo_txt} · Total: {int(total_ind):,} · Média diária: {media_ind:,.1f} · Pico diário: {int(melhor_ind):,}".replace(",", ".")
+            )
+
+            fig_ind = go.Figure()
+            fig_ind.add_trace(
+                go.Scatter(
+                    x=serie_indicador["Data"],
+                    y=serie_indicador["Atendimentos"],
+                    mode="lines+markers",
+                    line=dict(color=SEMANTIC_COLORS["series_2"], width=2.8),
+                    marker=dict(size=6, color=SEMANTIC_COLORS["series_2"]),
+                    hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>",
+                )
+            )
+            fig_ind = apply_plotly_theme(
+                fig_ind,
+                title=f"{descricao}",
+                subtitle="",
+                yaxis_title="Atendimentos",
+                height=300,
+                legend=False,
+            )
+            plot(fig_ind, f"samu_indicador_{idx}")
+            st.divider()
+    section_end()
+
+    section_start("Resumo por procedimento", "Totais do período e colunas de meta da aba SAMU")
+    resumo_periodo = procedimentos_total.rename(columns={"Atendimentos": "Total_Periodo"})
+    tabela_resumo = resumo_periodo.merge(resumo[["Descricao", "Codigo_SIGTAP", "Meta", "Falta", "Eficacia"]], on=["Descricao", "Codigo_SIGTAP"], how="left")
+    tabela_resumo = tabela_resumo.sort_values("Total_Periodo", ascending=False).reset_index(drop=True)
+
+    if "Eficacia" in tabela_resumo.columns:
+        tabela_resumo["Eficacia_pct"] = (pd.to_numeric(tabela_resumo["Eficacia"], errors="coerce") * 100).round(1)
+    else:
+        tabela_resumo["Eficacia_pct"] = pd.NA
+
+    st.dataframe(tabela_resumo[["Descricao", "Codigo_SIGTAP", "Total_Periodo", "Meta", "Falta", "Eficacia_pct"]].rename(columns={"Descricao": "Descrição", "Codigo_SIGTAP": "Cód. SIGTAP", "Total_Periodo": "Total no período", "Meta": "Meta", "Falta": "Falta", "Eficacia_pct": "% Eficácia"}), use_container_width=True)
+    section_end()
+
+
 st.sidebar.markdown(
     f"""
     <div class="sidebar-footer-card">
@@ -4112,6 +5291,9 @@ if pagina == "UPA Luziânia":
 
 elif pagina == "UPA Jardim Ingá":
     render_upa_page(data, "UPA JARDIM INGÁ - UPA I")
+
+elif pagina == "SAMU":
+    render_samu_page()
 
 elif pagina == "HMJI":
     render_hmji(data)
