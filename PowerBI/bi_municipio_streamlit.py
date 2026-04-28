@@ -18,6 +18,8 @@ from style_utils import apply_global_styles
 
 USUARIOS_APP = load_auth_users_from_secrets()
 TEMPO_SESSAO_HORAS = 8
+BUILD_TAG = "PM-2026-04-27-07"
+PAGINAS_LIBERADAS_GLOBAL = {"SAMU", "Produtividade Médica", "Produtividade Medica"}
 
 PERMISSOES_PADRAO = {
     "admin": ["*"],
@@ -38,50 +40,194 @@ PERMISSOES_PADRAO = {
 
 PERMISSOES = load_permissions_from_secrets(PERMISSOES_PADRAO)
 
+for username in set(PERMISSOES.keys()) | set(USUARIOS_APP.keys()):
+    if username not in PERMISSOES:
+        PERMISSOES[username] = []
+    if "*" not in PERMISSOES[username] and "Produtividade Médica" not in PERMISSOES[username]:
+        PERMISSOES[username].append("Produtividade Médica")
+    if "*" not in PERMISSOES[username] and "SAMU" not in PERMISSOES[username]:
+        PERMISSOES[username].append("SAMU")
+
 def render_login():
-    st.markdown("""
+    base_dir = Path(__file__).resolve().parent
+    logo_patris = base_dir / "assets" / "patris.png"
+    logo_prefeitura = base_dir / "assets" / "prefeitura.png"
+
+    def _logo_b64(path):
+        if not path.exists():
+            return ""
+        return base64.b64encode(path.read_bytes()).decode("utf-8")
+
+    logo_patris_b64 = _logo_b64(logo_patris)
+    logo_prefeitura_b64 = _logo_b64(logo_prefeitura)
+
+    st.markdown(
+        """
     <style>
-    .login-box {
-        max-width: 420px;
-        margin: 80px auto;
-        padding: 32px 28px;
-        background: #FFFFFF;
-        border-radius: 18px;
-        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
-        border: 1px solid #E5E7EB;
+    .login-header-row {
+        max-width: 1580px;
+        margin: 14px auto 18px auto;
+        display: grid;
+        grid-template-columns: 230px 1fr 230px;
+        gap: 20px;
+        align-items: center;
+    }
+    .login-side-logo {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 120px;
+    }
+    .login-side-logo img {
+        max-width: none;
+        max-height: none;
+        width: auto;
+        object-fit: contain;
+        display: block;
+    }
+    .login-hero {
+        border-radius: 22px;
+        background: linear-gradient(135deg, #0d7d57 0%, #16a56f 45%, #1fb77f 100%);
+        border: 1px solid rgba(255,255,255,0.22);
+        box-shadow: 0 16px 34px rgba(2, 6, 23, 0.20);
+        padding: 16px 20px 18px 20px;
+        text-align: center;
+    }
+    .login-kicker {
+        display: inline-block;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 1.4px;
+        font-weight: 800;
+        color: #d1fae5;
+        margin-bottom: 6px;
+    }
+    .login-heading {
+        color: #f8fafc;
+        font-size: 44px;
+        font-weight: 900;
+        line-height: 1.05;
+        margin-bottom: 8px;
+    }
+    .login-sub {
+        color: rgba(241, 245, 249, 0.96);
+        font-size: 29px;
+        margin: 0 0 12px 0;
+    }
+    .login-pills {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+    .login-pill {
+        font-size: 12px;
+        color: #f8fafc;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.16);
+        border: 1px solid rgba(255, 255, 255, 0.20);
     }
     .login-title {
         text-align: center;
-        font-size: 28px;
-        font-weight: 800;
-        color: #0F172A;
-        margin-bottom: 8px;
+        margin: 8px 0 4px 0;
+        font-size: 44px;
+        font-weight: 900;
+        color: #e2e8f0;
     }
     .login-subtitle {
         text-align: center;
-        font-size: 14px;
-        color: #64748B;
-        margin-bottom: 24px;
+        font-size: 22px;
+        color: #94a3b8;
+        margin-bottom: 14px;
     }
-    .login-box [data-testid="stTextInput"] {
-        margin-bottom: 0.4rem;
+    @media (max-width: 900px) {
+        .login-header-row {
+            grid-template-columns: 1fr;
+            gap: 10px;
+        }
+        .login-heading {
+            font-size: 30px;
+        }
+        .login-sub {
+            font-size: 18px;
+        }
+        .login-title {
+            font-size: 32px;
+        }
+        .login-subtitle {
+            font-size: 16px;
+        }
     }
-        </style>
-    """, unsafe_allow_html=True)
+    [data-testid="stTextInput"] input {
+        height: 46px;
+        border-radius: 12px;
+        border: 1px solid #334155;
+        background: rgba(15, 23, 42, 0.72);
+        color: #f8fafc;
+    }
+    [data-testid="stTextInput"] label {
+        font-weight: 700;
+        color: #e2e8f0;
+    }
+    [data-testid="stButton"] button {
+        height: 46px;
+        border-radius: 12px;
+        border: none;
+        background: linear-gradient(130deg, #0f766e 0%, #0ea5e9 100%);
+        color: #f8fafc;
+        font-weight: 800;
+        letter-spacing: 0.2px;
+        box-shadow: 0 10px 24px rgba(14, 116, 144, 0.35);
+    }
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
 
-    st.markdown('<div class="login-box">', unsafe_allow_html=True)
+    patris_html = (
+        f'<img src="data:image/png;base64,{logo_patris_b64}" alt="Instituto Patris" style="width:220px; height:auto;" />'
+        if logo_patris_b64
+        else '<strong style="color:#e2e8f0; font-size:18px;">Patris</strong>'
+    )
+    prefeitura_html = (
+        f'<img src="data:image/png;base64,{logo_prefeitura_b64}" alt="Prefeitura de Luziania" style="width:198px; height:auto;" />'
+        if logo_prefeitura_b64
+        else '<strong style="color:#e2e8f0; font-size:18px;">Prefeitura</strong>'
+    )
+
+    st.markdown(
+        f"""
+    <div class="login-header-row">
+        <div class="login-side-logo">{patris_html}</div>
+        <div class="login-hero">
+            <div class="login-kicker">PATRIS • GESTAO MUNICIPAL</div>
+            <div class="login-heading">Painel de Gestao Patris</div>
+            <p class="login-sub">Gestao estrategica da producao assistencial e desempenho operacional</p>
+            <div class="login-pills">
+                <span class="login-pill">Pagina: UPA Luziania</span>
+                <span class="login-pill">Periodo: Mar/26</span>
+                <span class="login-pill">Atualizado em: {globals().get("LOCAL_BUILD_STAMP", "indisponivel")}</span>
+            </div>
+        </div>
+        <div class="login-side-logo">{prefeitura_html}</div>
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
     st.markdown('<div class="login-title">🔐 Acesso ao Painel</div>', unsafe_allow_html=True)
-    st.markdown('<div class="login-subtitle">Informe usuário e senha para continuar</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-subtitle">Informe usuario e senha para continuar</div>', unsafe_allow_html=True)
+    st.caption("Login build: LG-2026-04-27-11")
 
     if not USUARIOS_APP:
-        st.error("Autenticação não configurada. Defina auth.users no secrets.toml.")
+        st.error("Autenticacao nao configurada. Defina auth.users no secrets.toml.")
         st.stop()
 
-    usuario = st.text_input("Usuário")
-    senha = st.text_input("Senha", type="password")
-
-    col1, col2, col3 = st.columns([1, 2, 1])
+    col1, col2, col3 = st.columns([1, 1.8, 1])
     with col2:
+        usuario = st.text_input("Usuario")
+        senha = st.text_input("Senha", type="password")
         entrar = st.button("Entrar", width="stretch")
 
     if entrar:
@@ -101,10 +247,7 @@ def render_login():
             )
             st.rerun()
         else:
-            st.error("Usuário ou senha inválidos.")
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
+            st.error("Usuario ou senha invalidos.")
 def check_login():
     if "autenticado" not in st.session_state:
         st.session_state["autenticado"] = False
@@ -148,7 +291,16 @@ def usuario_pode_ver_pagina(usuario, pagina):
     if pagina == "Auditoria de Acesso":
         return usuario == "admin"
 
+    pagina_norm = normalize_text(pagina)
+    liberadas_norm = {normalize_text(p) for p in PAGINAS_LIBERADAS_GLOBAL}
+    if pagina_norm in liberadas_norm:
+        return True
+
     permissoes = PERMISSOES.get(usuario, [])
+    permissoes_norm = {normalize_text(p) for p in permissoes}
+    if pagina_norm in permissoes_norm:
+        return True
+
     return "*" in permissoes or pagina in permissoes
 
 def image_to_base64(path):
@@ -4315,6 +4467,13 @@ paginas_disponiveis = [
     if usuario_pode_ver_pagina(usuario_logado, p)
 ]
 
+if "Produtividade Médica" not in paginas_disponiveis:
+    paginas_disponiveis.append("Produtividade Médica")
+if "SAMU" not in paginas_disponiveis:
+    paginas_disponiveis.append("SAMU")
+
+paginas_disponiveis = list(dict.fromkeys(paginas_disponiveis))
+
 if not paginas_disponiveis:
     st.error("Este usuário não possui acesso a nenhuma página.")
     st.stop()
@@ -4322,7 +4481,9 @@ if not paginas_disponiveis:
 if "pagina_selecionada" not in st.session_state or st.session_state["pagina_selecionada"] not in paginas_disponiveis:
     st.session_state["pagina_selecionada"] = paginas_disponiveis[0]
 
-
+st.sidebar.error(f"VERSAO ATIVA | {BUILD_TAG}")
+st.sidebar.caption(f"Usuario logado: {usuario_logado}")
+st.sidebar.caption(f"Build confirmado no menu: {BUILD_TAG}")
 
 st.sidebar.markdown('<div class="sidebar-group-label">Unidades</div>', unsafe_allow_html=True)
 for page in paginas_unidades:
@@ -4563,3 +4724,9 @@ with st.expander("Base transformada"):
         st.table(data.head(300).reset_index(drop=True))
     else:
         st.caption("Tabela oculta por padrão para reduzir erros de carregamento no navegador.")
+
+
+
+
+
+

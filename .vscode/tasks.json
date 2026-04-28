@@ -1,35 +1,76 @@
 {
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "Streamlit: Start 8501 (Clean)",
-      "type": "shell",
-      "command": "powershell",
-      "args": [
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "${workspaceFolder}/start_streamlit_8501.ps1",
-        "-Port",
-        "8501",
-        "-OpenBrowser"
-      ],
-      "isBackground": true,
-      "problemMatcher": []
-    },
-    {
-      "label": "Streamlit: Doctor 8501",
-      "type": "shell",
-      "command": "powershell",
-      "args": [
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "${workspaceFolder}/doctor_streamlit_local.ps1",
-        "-Port",
-        "8501"
-      ],
-      "problemMatcher": []
-    }
-  ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Streamlit: Start 8501 (Safe)",
+			"dependsOrder": "sequence",
+			"dependsOn": [
+				"Streamlit: Doctor 8501 (Strict)",
+				"Streamlit: Start 8501 (Clean)"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Streamlit: Start 8501 (Clean)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}/start_streamlit_8501.ps1",
+				"-Port",
+				"8501",
+				"-OpenBrowser"
+			],
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Streamlit: Doctor 8501",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}/doctor_streamlit_local.ps1",
+				"-Port",
+				"8501"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Streamlit: Doctor 8501 (Strict)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}/doctor_streamlit_local.ps1",
+				"-Port",
+				"8501",
+				"-Strict"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Streamlit: Start 8501 (Force)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}/start_streamlit_8501.ps1",
+				"-Port",
+				"8501",
+				"-OpenBrowser",
+				"-Force",
+				"-AllowUnchangedCode"
+			],
+			"isBackground": true
+		}
+	]
 }
