@@ -1,4 +1,4 @@
-﻿import datetime as dt
+import datetime as dt
 from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
@@ -11,15 +11,37 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-from auth_utils import load_auth_users_from_secrets, load_permissions_from_secrets, verify_password
+from auth_utils import (
+    disable_user,
+    load_auth_users_from_secrets,
+    load_permissions_from_secrets,
+    read_auth_store_summary,
+    set_user_password,
+    set_user_permissions,
+    verify_password,
+)
 from audit_utils import append_audit_event, read_audit_events
 from style_utils import apply_global_styles
 
 
 USUARIOS_APP = load_auth_users_from_secrets()
 TEMPO_SESSAO_HORAS = 8
-BUILD_TAG = "PM-2026-04-27-07"
-PAGINAS_LIBERADAS_GLOBAL = {"SAMU", "Produtividade Médica", "Produtividade Medica"}
+BUILD_TAG = "PM-2026-04-27-08"
+PAGINA_PRODUTIVIDADE = "Produtividade UPAs"
+ROTULO_PRODUTIVIDADE = "Produtividade Médica UPAs"
+PAGINA_ADMIN_ACESSOS = "Administracao de Acessos"
+PAGINAS_LIBERADAS_GLOBAL = {"SAMU", PAGINA_PRODUTIVIDADE, ROTULO_PRODUTIVIDADE, "Produtividade Upas"}
+
+
+def get_local_build_stamp():
+    try:
+        mtime = Path(__file__).stat().st_mtime
+        return dt.datetime.fromtimestamp(mtime).strftime("%d/%m/%Y %H:%M:%S")
+    except Exception:
+        return "indisponivel"
+
+
+LOCAL_BUILD_STAMP = get_local_build_stamp()
 
 PERMISSOES_PADRAO = {
     "admin": ["*"],
@@ -27,26 +49,33 @@ PERMISSOES_PADRAO = {
     "wendel": ["*"],
     "guilherme": ["*"],
     "denis": ["*"],
-    "prefeitura": ["UPA Luziânia",
-    "UPA Jardim Ingá",
-    "SAMU",
-    "HMJI",
-    "Atenção Secundária",
-    "Saúde Mental",
-    "Atenção Primária",
-    "Gestão de Pessoas",
-    "Metas do Plano"],
+    "prefeitura": [
+        "UPA Luziânia",
+        "UPA Jardim Ingá",
+        "SAMU",
+        "HMJI",
+        "Atenção Secundária",
+        "Saúde Mental",
+        "Atenção Primária",
+        "Gestão de Pessoas",
+        "Metas do Plano",
+        PAGINA_PRODUTIVIDADE,
+    ],
 }
 
 PERMISSOES = load_permissions_from_secrets(PERMISSOES_PADRAO)
 
+# Reforco para evitar sumico de paginas quando secrets nao traz merge de permissoes.
 for username in set(PERMISSOES.keys()) | set(USUARIOS_APP.keys()):
     if username not in PERMISSOES:
         PERMISSOES[username] = []
-    if "*" not in PERMISSOES[username] and "Produtividade Médica" not in PERMISSOES[username]:
-        PERMISSOES[username].append("Produtividade Médica")
+    if "*" not in PERMISSOES[username] and PAGINA_PRODUTIVIDADE not in PERMISSOES[username]:
+        PERMISSOES[username].append(PAGINA_PRODUTIVIDADE)
+    if "*" not in PERMISSOES[username] and "Produtividade UPAs" not in PERMISSOES[username]:
+        PERMISSOES[username].append("Produtividade UPAs")
     if "*" not in PERMISSOES[username] and "SAMU" not in PERMISSOES[username]:
         PERMISSOES[username].append("SAMU")
+
 
 def render_login():
     base_dir = Path(__file__).resolve().parent
@@ -77,6 +106,7 @@ def render_login():
         align-items: center;
         justify-content: center;
         min-height: 120px;
+        overflow: hidden;
     }
     .login-side-logo img {
         max-width: none;
@@ -84,6 +114,23 @@ def render_login():
         width: auto;
         object-fit: contain;
         display: block;
+    }
+    .login-side-logo-patris img {
+        width: min(100%, 260px) !important;
+        max-width: 260px !important;
+        transform: none;
+        object-fit: contain;
+        display: block;
+    }
+    .login-side-logo-patris {
+        min-height: 140px;
+    }
+    .login-side-logo-prefeitura img {
+        object-fit: contain;
+        display: block;
+    }
+    .login-side-logo-prefeitura {
+        min-height: 130px;
     }
     .login-hero {
         border-radius: 22px;
@@ -146,6 +193,16 @@ def render_login():
             grid-template-columns: 1fr;
             gap: 10px;
         }
+        .login-side-logo-patris img {
+            transform: scale(1.15);
+        }
+        .login-side-logo-prefeitura img {
+            transform: scale(1.4);
+        }
+        .login-side-logo-patris,
+        .login-side-logo-prefeitura {
+            min-height: 120px;
+        }
         .login-heading {
             font-size: 30px;
         }
@@ -186,12 +243,12 @@ def render_login():
     )
 
     patris_html = (
-        f'<img src="data:image/png;base64,{logo_patris_b64}" alt="Instituto Patris" style="width:220px; height:auto;" />'
+        f'<img src="data:image/png;base64,{logo_patris_b64}" alt="Instituto Patris" style="width:240px; max-width:100%; height:auto;" />'
         if logo_patris_b64
         else '<strong style="color:#e2e8f0; font-size:18px;">Patris</strong>'
     )
     prefeitura_html = (
-        f'<img src="data:image/png;base64,{logo_prefeitura_b64}" alt="Prefeitura de Luziania" style="width:198px; height:auto;" />'
+        f'<img src="data:image/png;base64,{logo_prefeitura_b64}" alt="Prefeitura de Luziania" style="width:198px; max-width:198px; height:auto;" />'
         if logo_prefeitura_b64
         else '<strong style="color:#e2e8f0; font-size:18px;">Prefeitura</strong>'
     )
@@ -199,7 +256,7 @@ def render_login():
     st.markdown(
         f"""
     <div class="login-header-row">
-        <div class="login-side-logo">{patris_html}</div>
+        <div class="login-side-logo login-side-logo-patris">{patris_html}</div>
         <div class="login-hero">
             <div class="login-kicker">PATRIS • GESTAO MUNICIPAL</div>
             <div class="login-heading">Painel de Gestao Patris</div>
@@ -210,7 +267,7 @@ def render_login():
                 <span class="login-pill">Atualizado em: {globals().get("LOCAL_BUILD_STAMP", "indisponivel")}</span>
             </div>
         </div>
-        <div class="login-side-logo">{prefeitura_html}</div>
+        <div class="login-side-logo login-side-logo-prefeitura">{prefeitura_html}</div>
     </div>
     """,
         unsafe_allow_html=True,
@@ -218,15 +275,15 @@ def render_login():
 
     st.markdown('<div class="login-title">🔐 Acesso ao Painel</div>', unsafe_allow_html=True)
     st.markdown('<div class="login-subtitle">Informe usuario e senha para continuar</div>', unsafe_allow_html=True)
-    st.caption("Login build: LG-2026-04-27-11")
+    st.caption("Login build: LG-2026-04-27-12")
 
     if not USUARIOS_APP:
-        st.error("Autenticacao nao configurada. Defina auth.users no secrets.toml.")
+        st.error("Autenticação não configurada. Defina auth.users no secrets.toml.")
         st.stop()
 
     col1, col2, col3 = st.columns([1, 1.8, 1])
     with col2:
-        usuario = st.text_input("Usuario")
+        usuario = st.text_input("Usuário")
         senha = st.text_input("Senha", type="password")
         entrar = st.button("Entrar", width="stretch")
 
@@ -247,7 +304,9 @@ def render_login():
             )
             st.rerun()
         else:
-            st.error("Usuario ou senha invalidos.")
+            st.error("Usuário ou senha inválidos.")
+
+
 def check_login():
     if "autenticado" not in st.session_state:
         st.session_state["autenticado"] = False
@@ -275,8 +334,8 @@ def check_login():
         render_login()
         st.stop()
 
-st.set_page_config(page_title="Painel de Gestão Patris", page_icon="📊", layout="wide")
 
+st.set_page_config(page_title="Painel de Gestão Patris", page_icon="📊", layout="wide")
 check_login()
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -287,7 +346,11 @@ LOGO_SIDEBAR = ASSETS_DIR / "logosemfundo.png"
 LOGO_PREFEITURA = ASSETS_DIR / "prefeitura.png"
 BACKGROUND_IMG = ASSETS_DIR / "background.png"
 
+
 def usuario_pode_ver_pagina(usuario, pagina):
+    if pagina == PAGINA_ADMIN_ACESSOS:
+        return usuario == "admin"
+
     if pagina == "Auditoria de Acesso":
         return usuario == "admin"
 
@@ -303,15 +366,18 @@ def usuario_pode_ver_pagina(usuario, pagina):
 
     return "*" in permissoes or pagina in permissoes
 
+
 def image_to_base64(path):
     if not path.exists():
         return ""
     return base64.b64encode(path.read_bytes()).decode("utf-8")
 
+
 BACKGROUND_BASE64 = image_to_base64(BACKGROUND_IMG)
 LOGO_PATRIS_BASE64 = image_to_base64(LOGO_PATRIS)
 LOGO_SIDEBAR_BASE64 = image_to_base64(LOGO_SIDEBAR) or LOGO_PATRIS_BASE64
 apply_global_styles(st, BACKGROUND_BASE64)
+
 
 MESES = [
     "MARCO.26", "ABRIL.26", "MAIO.26", "JUNHO.26",
@@ -333,6 +399,7 @@ MESES_LABEL = {
     "JANEIRO.27": "Jan/27",
     "FEVEREIRO.27": "Fev/27"
 }
+
 
 def default_previous_month_selection():
     month_name_to_number = {
@@ -394,6 +461,7 @@ def default_previous_month_selection():
         return [candidates[-1]]
 
     return [available_dates[0][1]]
+
 
 RISK_COLORS = {
     "NÃO URGENTE (AZUL)": "#1E3A8A",
@@ -460,7 +528,7 @@ def _status_threshold(indicator_hint, inverse_logic=False):
     text = normalize_text(indicator_hint) or ""
 
     if inverse_logic:
-        return 0.02  # indicadores de tempo/risco pedem maior sensibilidade
+        return 0.02
 
     strict_tokens = [
         "GASTO",
@@ -476,7 +544,7 @@ def _status_threshold(indicator_hint, inverse_logic=False):
 
 
 def _chart_exec_status(fig, indicator_hint=""):
-    """Calcula um status executivo simples com base na tendência dos dois últimos pontos."""
+    """Calcula um status executivo simples com base na tendencia dos dois ultimos pontos."""
     inverse_logic = _is_inverse_indicator(indicator_hint)
     threshold = _status_threshold(indicator_hint, inverse_logic=inverse_logic)
 
@@ -496,14 +564,12 @@ def _chart_exec_status(fig, indicator_hint=""):
             xs = list(xs_raw)
             ys_raw = list(ys_values)
         except Exception:
-            # Ignora traces que nao exponham x/y em formato iteravel.
             continue
 
         if not xs or not ys_raw:
             continue
 
         ys = [_to_number(v) for v in ys_raw]
-
         points = [(x, y) for x, y in zip(xs, ys) if y is not None]
         if len(points) < 2:
             continue
@@ -783,6 +849,7 @@ def parse_sheet(ws, sheet_name):
             })
 
     df = pd.DataFrame(rows)
+
     if not df.empty:
         df["valor_num"] = pd.to_numeric(df["valor"], errors="coerce")
         df["mes"] = pd.Categorical(df["mes"], categories=MESES, ordered=True)
@@ -1114,6 +1181,77 @@ def load_financeiro_data(file_bytes=None, _mtime=None):
     return df
 
 
+@st.cache_data(show_spinner=False)
+def load_produtividade_data():
+    base = Path(__file__).parent
+    path = None
+    for name in ["urgencia_tratado_validado.xlsx", "urgencia_tratado_final.xlsx"]:
+        candidate = base / name
+        if candidate.exists():
+            path = candidate
+            break
+
+    empty = {
+        "kpi_diario": pd.DataFrame(),
+        "kpi_diario_unidade": pd.DataFrame(),
+        "kpi_semanal": pd.DataFrame(),
+        "ranking": pd.DataFrame(),
+        "top5_geral": pd.DataFrame(),
+        "top5_upa2": pd.DataFrame(),
+        "top5_upa1": pd.DataFrame(),
+    }
+    if path is None:
+        return empty
+
+    xls = pd.ExcelFile(path)
+
+    def _sheet(name):
+        if name not in xls.sheet_names:
+            return pd.DataFrame()
+        return pd.read_excel(path, sheet_name=name)
+
+    kpi_diario = _sheet("KPI_DIARIO_GERAL")
+    kpi_diario_unidade = _sheet("KPI_DIARIO_UNIDADE")
+    kpi_semanal = _sheet("KPI_SEMANAL_GERAL")
+    ranking = _sheet("RANKING_MEDICOS")
+    top5_geral = _sheet("TOP5_GERAL")
+    top5_upa2 = _sheet("TOP5_UPA_II")
+    top5_upa1 = _sheet("TOP5_UPA_I")
+
+    if "Data" in kpi_diario.columns:
+        kpi_diario["Data"] = pd.to_datetime(kpi_diario["Data"], errors="coerce", dayfirst=True)
+    for col in ["UPA II DE LUZI\u00c2NIA", "UPA I JARDIM ING\u00c1", "SAMU", "Total_Geral_24h"]:
+        if col in kpi_diario.columns:
+            kpi_diario[col] = pd.to_numeric(kpi_diario[col], errors="coerce")
+
+    if "Data" in kpi_diario_unidade.columns:
+        kpi_diario_unidade["Data"] = pd.to_datetime(kpi_diario_unidade["Data"], errors="coerce", dayfirst=True)
+    for col in ["Total_24h_Final", "Media_Hora_24h", "Subtotal_Diurno", "Subtotal_Noturno"]:
+        if col in kpi_diario_unidade.columns:
+            kpi_diario_unidade[col] = pd.to_numeric(kpi_diario_unidade[col], errors="coerce")
+
+    if "Semana_Inicio" in kpi_semanal.columns:
+        kpi_semanal["Semana_Inicio"] = pd.to_datetime(kpi_semanal["Semana_Inicio"], errors="coerce", dayfirst=True)
+    if "Semana_Fim" in kpi_semanal.columns:
+        kpi_semanal["Semana_Fim"] = pd.to_datetime(kpi_semanal["Semana_Fim"], errors="coerce", dayfirst=True)
+    for col in ["Total_Semana_Geral", "Media_Diaria_Geral", "Total_Semana_UPA_II", "Total_Semana_UPA_I", "Total_Semana_SAMU"]:
+        if col in kpi_semanal.columns:
+            kpi_semanal[col] = pd.to_numeric(kpi_semanal[col], errors="coerce")
+
+    for col in ["Total_Atendimentos", "Plantoes", "Media_por_Plantao", "Media_por_Hora"]:
+        for df_r in [ranking, top5_geral, top5_upa2, top5_upa1]:
+            if col in df_r.columns:
+                df_r[col] = pd.to_numeric(df_r[col], errors="coerce")
+
+    return {
+        "kpi_diario": kpi_diario,
+        "kpi_diario_unidade": kpi_diario_unidade,
+        "kpi_semanal": kpi_semanal,
+        "ranking": ranking,
+        "top5_geral": top5_geral,
+        "top5_upa2": top5_upa2,
+        "top5_upa1": top5_upa1,
+    }
 
 
 @st.cache_data(show_spinner=False)
@@ -1225,14 +1363,16 @@ def load_samu_data():
         efic_val = pd.to_numeric(pd.Series([row.iloc[eficacia_col]]), errors="coerce").iloc[0] if eficacia_col is not None else pd.NA
         meta_val = pd.to_numeric(pd.Series([row.iloc[meta_col]]), errors="coerce").iloc[0] if meta_col is not None else pd.NA
 
-        resumo_rows.append({
-            "Descricao": desc_text,
-            "Codigo_SIGTAP": codigo,
-            "Total": float(total_val) if pd.notna(total_val) else pd.NA,
-            "Falta": float(falta_val) if pd.notna(falta_val) else pd.NA,
-            "Eficacia": float(efic_val) if pd.notna(efic_val) else pd.NA,
-            "Meta": float(meta_val) if pd.notna(meta_val) else pd.NA,
-        })
+        resumo_rows.append(
+            {
+                "Descricao": desc_text,
+                "Codigo_SIGTAP": codigo,
+                "Total": float(total_val) if pd.notna(total_val) else pd.NA,
+                "Falta": float(falta_val) if pd.notna(falta_val) else pd.NA,
+                "Eficacia": float(efic_val) if pd.notna(efic_val) else pd.NA,
+                "Meta": float(meta_val) if pd.notna(meta_val) else pd.NA,
+            }
+        )
 
         for col_idx, day_num in day_cols:
             val = pd.to_numeric(pd.Series([row.iloc[col_idx]]), errors="coerce").iloc[0]
@@ -1246,13 +1386,15 @@ def load_samu_data():
                 except ValueError:
                     data_ref = None
 
-            diario_rows.append({
-                "Data": pd.to_datetime(data_ref) if data_ref is not None else pd.NaT,
-                "Dia": day_num,
-                "Descricao": desc_text,
-                "Codigo_SIGTAP": codigo,
-                "Atendimentos": float(val),
-            })
+            diario_rows.append(
+                {
+                    "Data": pd.to_datetime(data_ref) if data_ref is not None else pd.NaT,
+                    "Dia": day_num,
+                    "Descricao": desc_text,
+                    "Codigo_SIGTAP": codigo,
+                    "Atendimentos": float(val),
+                }
+            )
 
     diario_df = pd.DataFrame(diario_rows)
     resumo_df = pd.DataFrame(resumo_rows)
@@ -1464,17 +1606,39 @@ def filter_panel(df, unidade, painel):
     unidade_norm = normalize_text(unidade)
     painel_norm = normalize_text(painel)
 
-    # DEBUG TEMPORÁRIO (pode remover depois)
     df_test = df[df["unidade_norm"] == unidade_norm]
 
     # tenta match exato
     result = df_test[df_test["painel_norm"] == painel_norm]
 
-    # 🔥 FALLBACK INTELIGENTE
+    # fallback por contains quando há pequenas variações de rótulo
     if result.empty:
         result = df_test[
             df_test["painel_norm"].str.contains(painel_norm, na=False)
         ]
+
+    # fallback fuzzy para casos de texto corrompido no Excel (ex.: CLASSIFICA��O)
+    if result.empty and not df_test.empty and painel_norm:
+        import difflib
+
+        candidatos = (
+            df_test["painel_norm"]
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+
+        melhor = None
+        melhor_score = 0.0
+        for cand in candidatos:
+            score = difflib.SequenceMatcher(None, painel_norm, cand).ratio()
+            if score > melhor_score:
+                melhor_score = score
+                melhor = cand
+
+        if melhor is not None and melhor_score >= 0.72:
+            result = df_test[df_test["painel_norm"] == melhor]
 
     return result.copy()
 
@@ -2323,6 +2487,8 @@ def section_end():
     st.markdown("</div>", unsafe_allow_html=True)
 
 def hero_header(page_title, source_name, meses_selecionados):
+    page_title_norm = normalize_text(str(page_title))
+    page_title_display = "Produtividade Médica UPAs" if "produtividade" in page_title_norm and "upa" in page_title_norm else page_title
     if not meses_selecionados:
         periodo = "Todos os meses"
     elif len(meses_selecionados) <= 4:
@@ -2414,7 +2580,7 @@ def hero_header(page_title, source_name, meses_selecionados):
                    Gestão estratégica da produção assistencial e desempenho operacional
                 </div>
                 <div class="hero-chip-row" style="justify-content: center; display: flex;">
-                    <div class="hero-chip">Página: {page_title}</div>
+                    <div class="hero-chip">Página: {page_title_display}</div>
                     <div class="hero-chip">Período: {periodo}</div>
                     <div class="hero-chip">Atualizado em: {data_ref}</div>
                 </div>
@@ -3277,9 +3443,12 @@ def render_upa_page(df, unidade):
 
     # remove meses totalmente zerados
     if not risco_plot.empty:
+        risco_plot_original = risco_plot.copy()
         soma_mes_risco = risco_plot.groupby("mes_label")["valor_num"].sum(min_count=1)
         meses_validos_risco = soma_mes_risco[soma_mes_risco.fillna(0) > 0].index.tolist()
         risco_plot = risco_plot[risco_plot["mes_label"].isin(meses_validos_risco)].copy()
+        if risco_plot.empty:
+            risco_plot = risco_plot_original
 
     grouped_bar(
         risco_plot,
@@ -3291,16 +3460,23 @@ def render_upa_page(df, unidade):
     )
 
     perc_plot = perc_risco[
-        perc_risco["serie_norm"].str.contains("TOTAL", na=False)
+        ~perc_risco["serie_norm"].str.contains("TOTAL", na=False)
     ].copy()
+
+    # fallback para bases que só trazem linha TOTAL no painel percentual
+    if perc_plot.empty:
+        perc_plot = perc_risco.copy()
 
     # remove erros e meses vazios
     perc_plot = perc_plot[perc_plot["valor_num"].notna()].copy()
 
     if not perc_plot.empty:
+        perc_plot_original = perc_plot.copy()
         soma_mes_perc = perc_plot.groupby("mes_label")["valor_num"].sum(min_count=1)
         meses_validos_perc = soma_mes_perc[soma_mes_perc.fillna(0) > 0].index.tolist()
         perc_plot = perc_plot[perc_plot["mes_label"].isin(meses_validos_perc)].copy()
+        if perc_plot.empty:
+            perc_plot = perc_plot_original
 
         # Excel percentual vem como fração (ex.: 0.65) -> converter para 65
         perc_plot["valor_num"] = perc_plot["valor_num"] * 100
@@ -3820,6 +3996,187 @@ def render_rh_page(df, meses_filtrados):
     section_end()
 
 
+def render_produtividade_medica_page():
+    prod = load_produtividade_data()
+    kd = prod["kpi_diario"].copy()
+    ku = prod["kpi_diario_unidade"].copy()
+    ks = prod["kpi_semanal"].copy()
+    rk = prod["ranking"].copy()
+    t0 = prod["top5_geral"].copy()
+    t2 = prod["top5_upa2"].copy()
+    t1 = prod["top5_upa1"].copy()
+
+    if kd.empty and rk.empty:
+        st.warning("Arquivo urgencia_tratado_validado.xlsx não encontrado na pasta do app.")
+        return
+
+    st.markdown("## 📈 Produtividade Médica UPAs")
+    st.markdown("#### Filtros")
+
+    data_min = kd["Data"].dropna().min().date() if "Data" in kd.columns and not kd["Data"].dropna().empty else None
+    data_max = kd["Data"].dropna().max().date() if "Data" in kd.columns and not kd["Data"].dropna().empty else None
+
+    cf1, cf2 = st.columns([1, 2])
+    with cf1:
+        unid = st.selectbox(
+            "Unidade",
+            ["Todas", "UPA II DE LUZIÂNIA", "UPA I JARDIM INGÁ"],
+            key="pm_unid",
+        )
+    with cf2:
+        if data_min and data_max:
+            periodo = st.date_input(
+                "Período",
+                value=(data_min, data_max),
+                min_value=data_min,
+                max_value=data_max,
+                key="pm_periodo",
+            )
+        else:
+            periodo = None
+    st.divider()
+
+    ini = fim = None
+    if isinstance(periodo, (list, tuple)) and len(periodo) == 2:
+        ini, fim = pd.to_datetime(periodo[0]), pd.to_datetime(periodo[1])
+    elif isinstance(periodo, dt.date):
+        ini = fim = pd.to_datetime(periodo)
+
+    if ini is not None:
+        if "Data" in kd.columns:
+            kd = kd[(kd["Data"] >= ini) & (kd["Data"] <= fim)].copy()
+        if "Data" in ku.columns:
+            ku = ku[(ku["Data"] >= ini) & (ku["Data"] <= fim)].copy()
+        if "Semana_Inicio" in ks.columns and "Semana_Fim" in ks.columns:
+            ks = ks[(ks["Semana_Fim"] >= ini) & (ks["Semana_Inicio"] <= fim)].copy()
+
+    unidade_col_map = {
+        "UPA II DE LUZIÂNIA": "UPA II DE LUZIÂNIA",
+        "UPA I JARDIM INGÁ": "UPA I JARDIM INGÁ",
+    }
+    serie_coluna = "Total_Geral_24h"
+    if unid != "Todas":
+        serie_coluna = unidade_col_map.get(unid, "Total_Geral_24h")
+
+    if unid != "Todas":
+        if "Unidade" in ku.columns:
+            ku = ku[ku["Unidade"] == unid].copy()
+        if "Unidade" in rk.columns:
+            rk = rk[rk["Unidade"] == unid].copy()
+        top5_ref = t2 if unid == "UPA II DE LUZIÂNIA" else (t1 if unid == "UPA I JARDIM INGÁ" else t0)
+    else:
+        top5_ref = t0
+
+    # KPIs seguem exatamente a unidade selecionada no filtro.
+    if "Data" in kd.columns and serie_coluna in kd.columns:
+        kpi_df = kd[["Data", serie_coluna]].copy().rename(columns={serie_coluna: "valor"}).dropna(subset=["Data", "valor"])
+    else:
+        kpi_df = pd.DataFrame(columns=["Data", "valor"])
+
+    serie = pd.to_numeric(kpi_df.get("valor", pd.Series(dtype=float)), errors="coerce").dropna()
+    total = float(serie.sum()) if not serie.empty else 0.0
+    media = float(serie.mean()) if not serie.empty else 0.0
+    melhor = float(serie.max()) if not serie.empty else 0.0
+    pior = float(serie.min()) if not serie.empty else 0.0
+    melhor_dia = pior_dia = "-"
+    if not kpi_df.empty:
+        melhor_dia = kpi_df.loc[kpi_df["valor"].idxmax(), "Data"].strftime("%d/%m/%Y")
+        pior_dia = kpi_df.loc[kpi_df["valor"].idxmin(), "Data"].strftime("%d/%m/%Y")
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        top_kpi_card("Total do período", f"{int(total):,}".replace(",", "."), icon="📈", subtitle="Soma diária", accent_color=SEMANTIC_COLORS["success"], subtitle_color=SEMANTIC_COLORS["success"])
+    with k2:
+        top_kpi_card("Média diária", f"{media:,.1f}".replace(",", "."), icon="📆", subtitle="Média do período", accent_color=SEMANTIC_COLORS["primary"], subtitle_color=SEMANTIC_COLORS["primary"])
+    with k3:
+        top_kpi_card("Melhor dia", f"{int(melhor):,}".replace(",", "."), icon="🏆", subtitle=f"Data: {melhor_dia}", accent_color=SEMANTIC_COLORS["warning"], subtitle_color=SEMANTIC_COLORS["warning"])
+    with k4:
+        top_kpi_card("Pior dia", f"{int(pior):,}".replace(",", "."), icon="📉", subtitle=f"Data: {pior_dia}", accent_color=SEMANTIC_COLORS["danger"], subtitle_color=SEMANTIC_COLORS["danger"])
+
+    section_start("Evolução diária", "Atendimentos por dia")
+    if not kpi_df.empty:
+        ln = kpi_df.sort_values("Data")
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=ln["Data"],
+                y=ln["valor"],
+                mode="lines+markers",
+                line=dict(color=SEMANTIC_COLORS["primary"], width=3),
+                marker=dict(size=6),
+                hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Total: %{y:,.0f}<extra></extra>",
+            )
+        )
+        fig = apply_plotly_theme(fig, title="Atendimentos diários", subtitle="", yaxis_title="Atendimentos", height=360, legend=False)
+        plot(fig, "pm_evolucao")
+    else:
+        st.info("Sem dados para o período selecionado.")
+    section_end()
+
+    section_start("Produção por unidade", "UPA II · UPA I")
+    ucols = [c for c in ["UPA II DE LUZIÂNIA", "UPA I JARDIM INGÁ"] if c in kd.columns]
+    if ucols and not kd.empty and "Data" in kd.columns:
+        plot_cols = ucols if unid == "Todas" else [c for c in ucols if c == unid]
+        if plot_cols:
+            lng = kd[["Data"] + plot_cols].melt(id_vars="Data", var_name="Unidade", value_name="Atendimentos").dropna(subset=["Atendimentos", "Data"]).sort_values("Data")
+            fig2 = px.line(
+                lng,
+                x="Data",
+                y="Atendimentos",
+                color="Unidade",
+                markers=True,
+                color_discrete_sequence=[SEMANTIC_COLORS["series_1"], SEMANTIC_COLORS["series_2"], SEMANTIC_COLORS["series_3"]],
+            )
+            fig2.update_traces(hovertemplate="<b>%{fullData.name}</b><br>%{x|%d/%m/%Y}<br>%{y:,.0f}<extra></extra>")
+            fig2 = apply_plotly_theme(fig2, title="Atendimentos por unidade", subtitle="", yaxis_title="Atendimentos", height=360, legend=True, legend_orientation="h")
+            plot(fig2, "pm_unidades")
+    else:
+        st.info("Sem dados por unidade.")
+    section_end()
+
+    section_start("Produção semanal", "Totais consolidados por semana")
+    semanal_col_map = {
+        "Todas": "Total_Semana_Geral",
+        "UPA II DE LUZIÂNIA": "Total_Semana_UPA_II",
+        "UPA I JARDIM INGÁ": "Total_Semana_UPA_I",
+    }
+    semanal_col = semanal_col_map.get(unid, "Total_Semana_Geral")
+    semanal_titulo = "Produção semanal geral" if unid == "Todas" else f"Produção semanal - {unid}"
+
+    if not ks.empty and semanal_col in ks.columns and "Semana_Inicio" in ks.columns and "Semana_Fim" in ks.columns:
+        sp = ks.sort_values("Semana_Inicio").copy()
+        sp["Semana"] = sp.apply(
+            lambda r: f"{r['Semana_Inicio'].strftime('%d/%m')} - {r['Semana_Fim'].strftime('%d/%m')}" if pd.notna(r.get("Semana_Inicio")) and pd.notna(r.get("Semana_Fim")) else "-",
+            axis=1,
+        )
+        fig3 = px.bar(sp, x="Semana", y=semanal_col, color_discrete_sequence=[SEMANTIC_COLORS["primary_soft"]])
+        fig3.update_traces(marker_line_width=0, hovertemplate="<b>%{x}</b><br>%{y:,.0f}<extra></extra>")
+        fig3 = apply_plotly_theme(fig3, title=semanal_titulo, subtitle="", yaxis_title="Atendimentos", height=340, legend=False)
+        plot(fig3, "pm_semanal")
+    else:
+        st.info("Sem dados semanais.")
+    section_end()
+
+    section_start("Top 5 médicos", "Ranking dos 5 primeiros no período")
+    if not top5_ref.empty and "Médico" in top5_ref.columns and "Total_Atendimentos" in top5_ref.columns:
+        fig4 = px.bar(top5_ref, y="Médico", x="Total_Atendimentos", orientation="h", color="Total_Atendimentos", color_continuous_scale=[SEMANTIC_COLORS["primary_soft"], SEMANTIC_COLORS["primary"]])
+        fig4.update_traces(hovertemplate="<b>%{y}</b><br>%{x:,.0f} atendimentos<extra></extra>")
+        fig4 = apply_plotly_theme(fig4, title="Top 5 por atendimentos", subtitle="", yaxis_title="", height=340, legend=False)
+        fig4.update_xaxes(title_text="Atendimentos")
+        plot(fig4, "pm_top5")
+    else:
+        st.info("Sem dados de Top 5.")
+    section_end()
+
+    section_start("Ranking completo", "Todos os médicos ordenados por atendimentos")
+    if not rk.empty:
+        rcols = [c for c in ["Médico", "Unidade", "Total_Atendimentos", "Plantoes", "Media_por_Plantao", "Media_por_Hora"] if c in rk.columns]
+        rv = rk.sort_values("Total_Atendimentos", ascending=False) if "Total_Atendimentos" in rk.columns else rk
+        st.dataframe(rv[rcols].reset_index(drop=True), use_container_width=True)
+    else:
+        st.info("Sem dados de ranking.")
+    section_end()
+
 
 def render_samu_page():
     samu = load_samu_data()
@@ -3838,7 +4195,13 @@ def render_samu_page():
 
     st.markdown("#### Filtros")
     if data_min and data_max:
-        periodo = st.date_input("Período", value=(data_min, data_max), min_value=data_min, max_value=data_max, key="samu_periodo")
+        periodo = st.date_input(
+            "Período",
+            value=(data_min, data_max),
+            min_value=data_min,
+            max_value=data_max,
+            key="samu_periodo",
+        )
     else:
         periodo = None
 
@@ -3850,7 +4213,9 @@ def render_samu_page():
         if isinstance(periodo, (list, tuple)) and len(periodo) == 2:
             ini = pd.to_datetime(periodo[0])
             fim = pd.to_datetime(periodo[1])
-            diario_filtrado = diario_filtrado[(diario_filtrado["Data"] >= ini) & (diario_filtrado["Data"] <= fim)].copy()
+            diario_filtrado = diario_filtrado[
+                (diario_filtrado["Data"] >= ini) & (diario_filtrado["Data"] <= fim)
+            ].copy()
         elif isinstance(periodo, dt.date):
             alvo = pd.to_datetime(periodo)
             diario_filtrado = diario_filtrado[diario_filtrado["Data"] == alvo].copy()
@@ -3860,7 +4225,11 @@ def render_samu_page():
         return
 
     diario_total = diario_filtrado.groupby("Data", as_index=False)["Atendimentos"].sum().sort_values("Data")
-    procedimentos_total = diario_filtrado.groupby(["Descricao", "Codigo_SIGTAP"], as_index=False)["Atendimentos"].sum().sort_values("Atendimentos", ascending=False)
+    procedimentos_total = (
+        diario_filtrado.groupby(["Descricao", "Codigo_SIGTAP"], as_index=False)["Atendimentos"]
+        .sum()
+        .sort_values("Atendimentos", ascending=False)
+    )
 
     total_periodo = float(diario_filtrado["Atendimentos"].sum())
     media_diaria = float(diario_total["Atendimentos"].mean()) if not diario_total.empty else 0.0
@@ -3870,25 +4239,81 @@ def render_samu_page():
 
     k1, k2, k3, k4 = st.columns(4)
     with k1:
-        top_kpi_card("Total no período", f"{int(total_periodo):,}".replace(",", "."), icon="📈", subtitle="Soma dos atendimentos", accent_color=SEMANTIC_COLORS["success"], subtitle_color=SEMANTIC_COLORS["success"])
+        top_kpi_card(
+            "Total no período",
+            f"{int(total_periodo):,}".replace(",", "."),
+            icon="📈",
+            subtitle="Soma dos atendimentos",
+            accent_color=SEMANTIC_COLORS["success"],
+            subtitle_color=SEMANTIC_COLORS["success"],
+        )
     with k2:
-        top_kpi_card("Média diária", f"{media_diaria:,.1f}".replace(",", "."), icon="📆", subtitle="Atendimentos por dia", accent_color=SEMANTIC_COLORS["primary"], subtitle_color=SEMANTIC_COLORS["primary"])
+        top_kpi_card(
+            "Média diária",
+            f"{media_diaria:,.1f}".replace(",", "."),
+            icon="📆",
+            subtitle="Atendimentos por dia",
+            accent_color=SEMANTIC_COLORS["primary"],
+            subtitle_color=SEMANTIC_COLORS["primary"],
+        )
     with k3:
-        top_kpi_card("Melhor dia", f"{int(melhor_dia):,}".replace(",", "."), icon="🏆", subtitle=f"Data: {melhor_data}", accent_color=SEMANTIC_COLORS["warning"], subtitle_color=SEMANTIC_COLORS["warning"])
+        top_kpi_card(
+            "Melhor dia",
+            f"{int(melhor_dia):,}".replace(",", "."),
+            icon="🏆",
+            subtitle=f"Data: {melhor_data}",
+            accent_color=SEMANTIC_COLORS["warning"],
+            subtitle_color=SEMANTIC_COLORS["warning"],
+        )
     with k4:
-        top_kpi_card("Procedimentos ativos", f"{procedimentos_ativos}", icon="🧾", subtitle="Com produção no período", accent_color=SEMANTIC_COLORS["danger"], subtitle_color=SEMANTIC_COLORS["danger"])
+        top_kpi_card(
+            "Procedimentos ativos",
+            f"{procedimentos_ativos}",
+            icon="🧾",
+            subtitle="Com produção no período",
+            accent_color=SEMANTIC_COLORS["danger"],
+            subtitle_color=SEMANTIC_COLORS["danger"],
+        )
 
     section_start("Metas mensais prioritárias", "Indicadores críticos com meta mensal definida")
+    st.markdown(
+        """
+        <style>
+        .samu-meta-title {
+            font-size: 0.98rem;
+            font-weight: 800;
+            letter-spacing: 0.2px;
+            line-height: 1.25;
+            height: 6.2em;
+            display: flex;
+            align-items: flex-end;
+            margin: 0 0 0.4rem 0;
+            color: #1e293b;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     metas_samu = [
         {
             "descricao": "ATENDIMENTO REALIZADO PELA USA TERRESTRE (COM ENVIO DA VIATURA)",
             "meta_mensal": 60.5,
-            "termos_chave": ["ATENDIMENTO REALIZADO", "USA TERRESTRE", "ENVIO DA VIATURA"],
+            "termos_chave": [
+                "ATENDIMENTO REALIZADO",
+                "USA TERRESTRE",
+                "ENVIO DA VIATURA",
+            ],
         },
         {
             "descricao": "ATENDIMENTO DAS CHAMADAS RECEBIDAS PELA CENTRAL DE REGULAÇÃO DAS URGÊNCIAS COM ORIENTAÇÃO (SEM ENVIO DE VIATURA)",
             "meta_mensal": 148.5,
-            "termos_chave": ["ATENDIMENTO DAS CHAMADAS RECEBIDAS", "CENTRAL DE REGULACAO DAS URGENCIAS", "ORIENTACAO", "SEM ENVIO DE VIATURA"],
+            "termos_chave": [
+                "ATENDIMENTO DAS CHAMADAS RECEBIDAS",
+                "CENTRAL DE REGULACAO DAS URGENCIAS",
+                "ORIENTACAO",
+                "SEM ENVIO DE VIATURA",
+            ],
         },
     ]
 
@@ -3897,13 +4322,18 @@ def render_samu_page():
         container = col_meta_1 if idx_meta == 0 else col_meta_2
         with container:
             desc_norm = procedimentos_total["Descricao"].fillna("").astype(str).map(normalize_text)
-            mask = desc_norm.map(lambda d: all(term in d for term in meta_cfg["termos_chave"]))
+            mask = desc_norm.map(
+                lambda d: all(term in d for term in meta_cfg["termos_chave"])
+            )
             realizado = float(procedimentos_total.loc[mask, "Atendimentos"].sum()) if mask.any() else 0.0
             meta_mensal = float(meta_cfg["meta_mensal"])
             atingimento = (realizado / meta_mensal) if meta_mensal > 0 else 0.0
             falta_ou_excedente = realizado - meta_mensal
 
-            st.markdown("##### " + str(meta_cfg["descricao"]))
+            st.markdown(
+                f'<div class="samu-meta-title">{meta_cfg["descricao"]}</div>',
+                unsafe_allow_html=True,
+            )
             top_kpi_card(
                 "Realizado no período",
                 f"{realizado:,.1f}".replace(",", "."),
@@ -3915,26 +4345,55 @@ def render_samu_page():
 
             pct_txt = f"{atingimento * 100:,.1f}%".replace(",", ".")
             saldo_txt = f"{abs(falta_ou_excedente):,.1f}".replace(",", ".")
+
             if falta_ou_excedente >= 0:
                 st.success(f"Meta atingida. Excedente: {saldo_txt} | Atingimento: {pct_txt}")
             else:
                 st.warning(f"Faltam {saldo_txt} para a meta mensal | Atingimento: {pct_txt}")
     section_end()
 
-
     section_start("Evolução diária", "Atendimentos totais por dia")
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=diario_total["Data"], y=diario_total["Atendimentos"], mode="lines+markers", line=dict(color=SEMANTIC_COLORS["primary"], width=3), marker=dict(size=6), hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>"))
-    fig = apply_plotly_theme(fig, title="Produção diária do SAMU", subtitle="", yaxis_title="Atendimentos", height=350, legend=False)
+    fig.add_trace(
+        go.Scatter(
+            x=diario_total["Data"],
+            y=diario_total["Atendimentos"],
+            mode="lines+markers",
+            line=dict(color=SEMANTIC_COLORS["primary"], width=3),
+            marker=dict(size=6),
+            hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>",
+        )
+    )
+    fig = apply_plotly_theme(
+        fig,
+        title="Produção diária do SAMU",
+        subtitle="",
+        yaxis_title="Atendimentos",
+        height=350,
+        legend=False,
+    )
     plot(fig, "samu_evolucao_diaria")
     section_end()
 
     section_start("Top procedimentos", "Maiores volumes no período filtrado")
     top_proc = procedimentos_total.head(10).copy()
     if not top_proc.empty:
-        fig2 = px.bar(top_proc.sort_values("Atendimentos", ascending=True), x="Atendimentos", y="Descricao", orientation="h", color_discrete_sequence=[SEMANTIC_COLORS["primary_soft"]])
+        fig2 = px.bar(
+            top_proc.sort_values("Atendimentos", ascending=True),
+            x="Atendimentos",
+            y="Descricao",
+            orientation="h",
+            color_discrete_sequence=[SEMANTIC_COLORS["primary_soft"]],
+        )
         fig2.update_traces(hovertemplate="<b>%{y}</b><br>%{x:,.0f}<extra></extra>")
-        fig2 = apply_plotly_theme(fig2, title="Top 10 procedimentos", subtitle="", yaxis_title="", height=420, legend=False)
+        fig2 = apply_plotly_theme(
+            fig2,
+            title="Top 10 procedimentos",
+            subtitle="",
+            yaxis_title="",
+            height=420,
+            legend=False,
+        )
         fig2.update_xaxes(title_text="Atendimentos")
         plot(fig2, "samu_top_procedimentos")
     else:
@@ -3997,7 +4456,11 @@ def render_samu_page():
 
     section_start("Resumo por procedimento", "Totais do período e colunas de meta da aba SAMU")
     resumo_periodo = procedimentos_total.rename(columns={"Atendimentos": "Total_Periodo"})
-    tabela_resumo = resumo_periodo.merge(resumo[["Descricao", "Codigo_SIGTAP", "Meta", "Falta", "Eficacia"]], on=["Descricao", "Codigo_SIGTAP"], how="left")
+    tabela_resumo = resumo_periodo.merge(
+        resumo[["Descricao", "Codigo_SIGTAP", "Meta", "Falta", "Eficacia"]],
+        on=["Descricao", "Codigo_SIGTAP"],
+        how="left",
+    )
     tabela_resumo = tabela_resumo.sort_values("Total_Periodo", ascending=False).reset_index(drop=True)
 
     if "Eficacia" in tabela_resumo.columns:
@@ -4005,9 +4468,27 @@ def render_samu_page():
     else:
         tabela_resumo["Eficacia_pct"] = pd.NA
 
-    st.dataframe(tabela_resumo[["Descricao", "Codigo_SIGTAP", "Total_Periodo", "Meta", "Falta", "Eficacia_pct"]].rename(columns={"Descricao": "Descrição", "Codigo_SIGTAP": "Cód. SIGTAP", "Total_Periodo": "Total no período", "Meta": "Meta", "Falta": "Falta", "Eficacia_pct": "% Eficácia"}), use_container_width=True)
+    st.dataframe(
+        tabela_resumo[
+            [
+                "Descricao",
+                "Codigo_SIGTAP",
+                "Total_Periodo",
+                "Meta",
+                "Falta",
+                "Eficacia_pct",
+            ]
+        ].rename(columns={
+            "Descricao": "Descrição",
+            "Codigo_SIGTAP": "Cód. SIGTAP",
+            "Total_Periodo": "Total no período",
+            "Meta": "Meta",
+            "Falta": "Falta",
+            "Eficacia_pct": "% Eficácia",
+        }),
+        use_container_width=True,
+    )
     section_end()
-
 
 st.sidebar.markdown(
     f"""
@@ -4125,6 +4606,10 @@ st.sidebar.markdown(
 
 usuario_logado = st.session_state.get("usuario_logado")
 
+st.sidebar.error(f"VERSAO ATIVA | {BUILD_TAG}")
+st.sidebar.caption(f"Build local: {globals().get('LOCAL_BUILD_STAMP', 'indisponivel')}")
+st.sidebar.caption(f"Usuario logado: {usuario_logado}")
+
 theme_by_user = {
     "admin": "Healthcare Clean (Verde)",
     "vittor": "Healthcare Clean (Verde)",
@@ -4173,257 +4658,6 @@ if theme_col3.button("Healthcare Clean", width="stretch"):
 if st.session_state["visual_theme"] != visual_theme:
     apply_visual_theme(st.session_state["visual_theme"])
 
-def load_produtividade_data():
-    base = Path(__file__).parent
-    path = None
-    for name in ["urgencia_tratado_validado.xlsx", "urgencia_tratado_final.xlsx"]:
-        c = base / name
-        if c.exists():
-            path = c
-            break
-    empty = {k: pd.DataFrame() for k in ["kpi_diario","kpi_unidade","kpi_semanal","ranking","top5_geral","top5_upa2","top5_upa1"]}
-    if path is None:
-        return empty
-    xl = pd.ExcelFile(path)
-    def _s(n):
-        return pd.read_excel(path, sheet_name=n) if n in xl.sheet_names else pd.DataFrame()
-    kd = _s("KPI_DIARIO_GERAL")
-    ku = _s("KPI_DIARIO_UNIDADE")
-    ks = _s("KPI_SEMANAL_GERAL")
-    rk = _s("RANKING_MEDICOS")
-    t0 = _s("TOP5_GERAL")
-    t2 = _s("TOP5_UPA_II")
-    t1 = _s("TOP5_UPA_I")
-    for df in [kd, ku]:
-        if "Data" in df.columns:
-            df["Data"] = pd.to_datetime(df["Data"], errors="coerce", dayfirst=True)
-    for df in [ks]:
-        for col in ["Semana_Inicio", "Semana_Fim"]:
-            if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
-    num_cols = ["UPA II DE LUZI\u00c2NIA","UPA I JARDIM ING\u00c1","SAMU","Total_Geral_24h",
-                "Total_24h_Final","Media_Hora_24h","Total_Semana_Geral","Total_Semana_UPA_II",
-                "Total_Semana_UPA_I","Total_Atendimentos","Plantoes","Media_por_Plantao","Media_por_Hora"]
-    for df in [kd, ku, ks, rk, t0, t2, t1]:
-        for col in num_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-    return {"kpi_diario":kd,"kpi_unidade":ku,"kpi_semanal":ks,"ranking":rk,
-            "top5_geral":t0,"top5_upa2":t2,"top5_upa1":t1}
-
-
-def render_produtividade_medica_page():
-    prod = load_produtividade_data()
-    kd = prod["kpi_diario"].copy()
-    ku = prod["kpi_unidade"].copy()
-    ks = prod["kpi_semanal"].copy()
-    rk = prod["ranking"].copy()
-    t0 = prod["top5_geral"].copy()
-    t2 = prod["top5_upa2"].copy()
-    t1 = prod["top5_upa1"].copy()
-
-    if kd.empty and rk.empty:
-        st.warning("Arquivo urgencia_tratado_validado.xlsx n\u00e3o encontrado na pasta do app.")
-        return
-
-    # Filtros internos (n\u00e3o afetam sidebar global)
-    data_min = kd["Data"].dropna().min().date() if "Data" in kd.columns and not kd["Data"].dropna().empty else None
-    data_max = kd["Data"].dropna().max().date() if "Data" in kd.columns and not kd["Data"].dropna().empty else None
-
-    st.markdown("#### Filtros")
-    cf1, cf2 = st.columns([1, 2])
-    with cf1:
-        unid = st.selectbox("Unidade", ["Todas", "UPA II DE LUZI\u00c2NIA", "UPA I JARDIM ING\u00c1", "SAMU"], key="pm_unid")
-    with cf2:
-        if data_min and data_max:
-            periodo = st.date_input("Per\u00edodo", value=(data_min, data_max), min_value=data_min, max_value=data_max, key="pm_periodo")
-        else:
-            periodo = None
-    st.divider()
-
-    ini = fim = None
-    if isinstance(periodo, (list, tuple)) and len(periodo) == 2:
-        ini, fim = pd.to_datetime(periodo[0]), pd.to_datetime(periodo[1])
-    elif isinstance(periodo, dt.date):
-        ini = fim = pd.to_datetime(periodo)
-
-    if ini is not None:
-        if "Data" in kd.columns:
-            kd = kd[(kd["Data"] >= ini) & (kd["Data"] <= fim)].copy()
-        if "Data" in ku.columns:
-            ku = ku[(ku["Data"] >= ini) & (ku["Data"] <= fim)].copy()
-        if "Semana_Inicio" in ks.columns:
-            ks = ks[(ks["Semana_Fim"] >= ini) & (ks["Semana_Inicio"] <= fim)].copy()
-
-    if unid != "Todas":
-        if "Unidade" in ku.columns:
-            ku = ku[ku["Unidade"] == unid].copy()
-        if "Unidade" in rk.columns:
-            rk = rk[rk["Unidade"] == unid].copy()
-        top5_ref = t2 if unid == "UPA II DE LUZI\u00c2NIA" else (t1 if unid == "UPA I JARDIM ING\u00c1" else t0)
-    else:
-        top5_ref = t0
-
-    # KPIs (respeitam a unidade selecionada)
-    unidade_col_map = {
-        "UPA II DE LUZIÂNIA": "UPA II DE LUZIÂNIA",
-        "UPA I JARDIM INGÁ": "UPA I JARDIM INGÁ",
-        "SAMU": "SAMU",
-    }
-    serie_coluna = "Total_Geral_24h" if unid == "Todas" else unidade_col_map.get(unid, "Total_Geral_24h")
-
-    base_kpi = kd[["Data", serie_coluna]].copy() if "Data" in kd.columns and serie_coluna in kd.columns else pd.DataFrame(columns=["Data", serie_coluna])
-    base_kpi = base_kpi.dropna(subset=["Data", serie_coluna])
-
-    serie = pd.to_numeric(base_kpi.get(serie_coluna, pd.Series(dtype=float)), errors="coerce").dropna()
-    total = float(serie.sum()) if not serie.empty else 0.0
-    media = float(serie.mean()) if not serie.empty else 0.0
-    melhor = float(serie.max()) if not serie.empty else 0.0
-    pior = float(serie.min()) if not serie.empty else 0.0
-
-    melhor_dia = pior_dia = "-"
-    if not base_kpi.empty:
-        melhor_dia = base_kpi.loc[base_kpi[serie_coluna].idxmax(), "Data"].strftime("%d/%m/%Y")
-        pior_dia = base_kpi.loc[base_kpi[serie_coluna].idxmin(), "Data"].strftime("%d/%m/%Y")
-
-    subtitulo_total = "Soma diária geral" if unid == "Todas" else f"Soma diária - {unid}"
-    subtitulo_media = "Média Total_Geral_24h" if unid == "Todas" else f"Média diária - {unid}"
-
-    k1, k2, k3, k4 = st.columns(4)
-    with k1:
-        top_kpi_card("Total do período", f"{int(total):,}".replace(",","."), icon="📈",
-                     subtitle=subtitulo_total, accent_color=SEMANTIC_COLORS["success"], subtitle_color=SEMANTIC_COLORS["success"])
-    with k2:
-        top_kpi_card("Média diária", f"{media:,.1f}".replace(",","."), icon="📆",
-                     subtitle=subtitulo_media, accent_color=SEMANTIC_COLORS["primary"], subtitle_color=SEMANTIC_COLORS["primary"])
-    with k3:
-        top_kpi_card("Melhor dia", f"{int(melhor):,}".replace(",","."), icon="🏆",
-                     subtitle=f"Data: {melhor_dia}", accent_color=SEMANTIC_COLORS["warning"], subtitle_color=SEMANTIC_COLORS["warning"])
-    with k4:
-        top_kpi_card("Pior dia", f"{int(pior):,}".replace(",","."), icon="📉",
-                     subtitle=f"Data: {pior_dia}", accent_color=SEMANTIC_COLORS["danger"], subtitle_color=SEMANTIC_COLORS["danger"])
-
-    # Evolução diária
-    section_start("Evolu\u00e7\u00e3o di\u00e1ria", "Total de atendimentos por dia")
-    if not kd.empty and "Data" in kd.columns and "Total_Geral_24h" in kd.columns:
-        ln = kd[["Data","Total_Geral_24h"]].dropna().sort_values("Data")
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=ln["Data"], y=ln["Total_Geral_24h"], mode="lines+markers",
-            line=dict(color=SEMANTIC_COLORS["primary"], width=3), marker=dict(size=6),
-            hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Total: %{y:,.0f}<extra></extra>"))
-        fig = apply_plotly_theme(fig, title="Atendimentos di\u00e1rios", subtitle="KPI_DIARIO_GERAL",
-                                 yaxis_title="Atendimentos", height=360, legend=False)
-        plot(fig, "pm_evolucao")
-    else:
-        st.info("Sem dados para o per\u00edodo selecionado.")
-    section_end()
-
-    # Produção por unidade
-    section_start("Produ\u00e7\u00e3o por unidade", "UPA II \u00b7 UPA I \u00b7 SAMU")
-    ucols = [c for c in ["UPA II DE LUZI\u00c2NIA","UPA I JARDIM ING\u00c1","SAMU"] if c in kd.columns]
-    if ucols and not kd.empty and "Data" in kd.columns:
-        plot_cols = ucols if unid == "Todas" else [c for c in ucols if c == unid]
-        if plot_cols:
-            lng = (kd[["Data"]+plot_cols]
-                   .melt(id_vars="Data", var_name="Unidade", value_name="Atendimentos")
-                   .dropna(subset=["Atendimentos","Data"]).sort_values("Data"))
-            fig2 = px.line(lng, x="Data", y="Atendimentos", color="Unidade", markers=True,
-                           color_discrete_sequence=[SEMANTIC_COLORS["series_1"],
-                                                    SEMANTIC_COLORS["series_2"],
-                                                    SEMANTIC_COLORS["series_3"]])
-            fig2.update_traces(hovertemplate="<b>%{fullData.name}</b><br>%{x|%d/%m/%Y}<br>%{y:,.0f}<extra></extra>")
-            fig2 = apply_plotly_theme(fig2, title="Atendimentos por unidade", subtitle="",
-                                      yaxis_title="Atendimentos", height=360, legend=True, legend_orientation="h")
-            plot(fig2, "pm_unidades")
-    else:
-        st.info("Sem dados por unidade.")
-    section_end()
-
-    # Semanal
-    section_start("Produção semanal", "Totais consolidados por semana")
-    semanal_col_map = {
-        "Todas": "Total_Semana_Geral",
-        "UPA II DE LUZIÂNIA": "Total_Semana_UPA_II",
-        "UPA I JARDIM INGÁ": "Total_Semana_UPA_I",
-        "SAMU": "Total_Semana_SAMU",
-    }
-    semanal_col = semanal_col_map.get(unid, "Total_Semana_Geral")
-    semanal_titulo = "Produção semanal geral" if unid == "Todas" else f"Produção semanal - {unid}"
-
-    if not ks.empty and semanal_col in ks.columns and "Semana_Inicio" in ks.columns and "Semana_Fim" in ks.columns:
-        sp = ks.sort_values("Semana_Inicio").copy()
-        sp["Semana"] = sp.apply(
-            lambda r: f"{r['Semana_Inicio'].strftime('%d/%m')} – {r['Semana_Fim'].strftime('%d/%m')}"
-            if pd.notna(r.get("Semana_Inicio")) and pd.notna(r.get("Semana_Fim")) else "-", axis=1)
-        fig3 = px.bar(sp, x="Semana", y=semanal_col,
-                      color_discrete_sequence=[SEMANTIC_COLORS["primary_soft"]])
-        fig3.update_traces(marker_line_width=0,
-                           hovertemplate="<b>%{x}</b><br>%{y:,.0f}<extra></extra>")
-        fig3 = apply_plotly_theme(fig3, title=semanal_titulo, subtitle="KPI_SEMANAL_GERAL",
-                                  yaxis_title="Atendimentos", height=340, legend=False)
-        plot(fig3, "pm_semanal")
-        if len(sp) >= 2:
-            va = sp.iloc[-1][semanal_col]
-            vb = sp.iloc[-2][semanal_col]
-            if pd.notna(va) and pd.notna(vb) and vb != 0:
-                st.caption(f"Variação vs semana anterior: {((va-vb)/abs(vb))*100:+.1f}%".replace(".",","))
-    else:
-        st.info("Sem dados semanais.")
-    section_end()
-
-    # Top 5 + Tempos
-    ca, cb = st.columns([1.2, 1])
-    with ca:
-        section_start("Top 5 m\u00e9dicos", "Ranking dos 5 primeiros no per\u00edodo")
-        if not top5_ref.empty and "M\u00e9dico" in top5_ref.columns and "Total_Atendimentos" in top5_ref.columns:
-            fig4 = px.bar(top5_ref, y="M\u00e9dico", x="Total_Atendimentos", orientation="h",
-                          color="Total_Atendimentos",
-                          color_continuous_scale=[SEMANTIC_COLORS["primary_soft"], SEMANTIC_COLORS["primary"]])
-            fig4.update_traces(hovertemplate="<b>%{y}</b><br>%{x:,.0f} atendimentos<extra></extra>")
-            fig4 = apply_plotly_theme(fig4, title="Top 5 por atendimentos", subtitle="",
-                                      yaxis_title="", height=340, legend=False)
-            fig4.update_xaxes(title_text="Atendimentos")
-            plot(fig4, "pm_top5")
-            n1 = str(top5_ref.iloc[0]["Médico"])
-            v1 = float(top5_ref.iloc[0]["Total_Atendimentos"]) if pd.notna(top5_ref.iloc[0]["Total_Atendimentos"]) else 0
-            st.success(f"\U0001f947 {n1} \u00b7 {int(v1):,} atendimentos".replace(",","."))
-        else:
-            st.info("Sem dados de Top 5.")
-        section_end()
-    with cb:
-        section_start("Tempos assistenciais", "M\u00e9dias do per\u00edodo")
-        tc = tp = "-"
-        if not kd.empty:
-            if "Tempo_Classificacao_Medio_hms" in kd.columns:
-                s = kd["Tempo_Classificacao_Medio_hms"].dropna().astype(str)
-                if not s.empty:
-                    tc = s.iloc[-1]
-            if "Tempo_Permanencia_Medio_hms" in kd.columns:
-                s = kd["Tempo_Permanencia_Medio_hms"].dropna().astype(str)
-                if not s.empty:
-                    tp = s.iloc[-1]
-        tc1, tc2 = st.columns(2)
-        with tc1:
-            top_kpi_card("Classifica\u00e7\u00e3o", tc, icon="\u23f1\ufe0f",
-                         subtitle="Tempo m\u00e9dio HH:MM",
-                         accent_color=SEMANTIC_COLORS["warning"], subtitle_color=SEMANTIC_COLORS["warning"])
-        with tc2:
-            top_kpi_card("Perman\u00eancia", tp, icon="\U0001f552",
-                         subtitle="Tempo m\u00e9dio HH:MM",
-                         accent_color=SEMANTIC_COLORS["danger"], subtitle_color=SEMANTIC_COLORS["danger"])
-        section_end()
-
-    # Ranking completo
-    section_start("Ranking completo", "Todos os m\u00e9dicos ordenados por atendimentos")
-    if not rk.empty:
-        rcols = [c for c in ["M\u00e9dico","Unidade","Total_Atendimentos","Plantoes",
-                              "Media_por_Plantao","Media_por_Hora"] if c in rk.columns]
-        rv = rk.sort_values("Total_Atendimentos", ascending=False) if "Total_Atendimentos" in rk.columns else rk
-        st.dataframe(rv[rcols].reset_index(drop=True), use_container_width=True)
-    else:
-        st.info("Sem dados de ranking.")
-    section_end()
-
 paginas_unidades = [
     "UPA Luziânia",
     "UPA Jardim Ingá",
@@ -4441,8 +4675,8 @@ paginas_administrativo = [
     "Metas do Plano",
     "Gestão de Pessoas",
     "Financeiro",
-    "Produtividade Médica",
-    "Auditoria de Acesso",
+    PAGINA_ADMIN_ACESSOS,
+    PAGINA_PRODUTIVIDADE,
 ]
 
 todas_paginas = paginas_unidades + paginas_basicas + paginas_administrativo
@@ -4458,8 +4692,9 @@ pagina_icons = {
     "Gestão de Pessoas": "👥",
     "Financeiro": "💰",
     "Metas do Plano": "📊",
-    "Produtividade Médica": "📈",
-    "Auditoria de Acesso": "🛡️",
+    PAGINA_ADMIN_ACESSOS: "🔐",
+    PAGINA_PRODUTIVIDADE: "📈",
+    "Produtividade UPAs": "📊",
 }
 
 paginas_disponiveis = [
@@ -4467,8 +4702,13 @@ paginas_disponiveis = [
     if usuario_pode_ver_pagina(usuario_logado, p)
 ]
 
-if "Produtividade Médica" not in paginas_disponiveis:
-    paginas_disponiveis.append("Produtividade Médica")
+# Fallback defensivo: garante exibicao da nova pagina mesmo com regras externas.
+if PAGINA_PRODUTIVIDADE not in paginas_administrativo:
+    paginas_administrativo.append(PAGINA_PRODUTIVIDADE)
+if PAGINA_PRODUTIVIDADE not in paginas_disponiveis:
+    paginas_disponiveis.append(PAGINA_PRODUTIVIDADE)
+if "SAMU" not in paginas_unidades:
+    paginas_unidades.append("SAMU")
 if "SAMU" not in paginas_disponiveis:
     paginas_disponiveis.append("SAMU")
 
@@ -4481,9 +4721,9 @@ if not paginas_disponiveis:
 if "pagina_selecionada" not in st.session_state or st.session_state["pagina_selecionada"] not in paginas_disponiveis:
     st.session_state["pagina_selecionada"] = paginas_disponiveis[0]
 
-st.sidebar.error(f"VERSAO ATIVA | {BUILD_TAG}")
-st.sidebar.caption(f"Usuario logado: {usuario_logado}")
-st.sidebar.caption(f"Build confirmado no menu: {BUILD_TAG}")
+# Compatibilidade: converte rótulo novo para chave interna estável.
+if st.session_state.get("pagina_selecionada") == ROTULO_PRODUTIVIDADE:
+    st.session_state["pagina_selecionada"] = PAGINA_PRODUTIVIDADE
 
 st.sidebar.markdown('<div class="sidebar-group-label">Unidades</div>', unsafe_allow_html=True)
 for page in paginas_unidades:
@@ -4498,8 +4738,6 @@ for page in paginas_unidades:
     ):
         st.session_state["pagina_selecionada"] = page
 
-
-
 st.sidebar.markdown('<div class="sidebar-group-label">Unidades basicas</div>', unsafe_allow_html=True)
 for page in paginas_basicas:
     if page not in paginas_disponiveis:
@@ -4513,20 +4751,32 @@ for page in paginas_basicas:
     ):
         st.session_state["pagina_selecionada"] = page
 
-
-
 st.sidebar.markdown('<div class="sidebar-group-label">Administrativo</div>', unsafe_allow_html=True)
 for page in paginas_administrativo:
+    if page == PAGINA_PRODUTIVIDADE:
+        continue
     if page not in paginas_disponiveis:
         continue
     active = st.session_state["pagina_selecionada"] == page
+    page_norm = normalize_text(str(page))
+    page_label = ROTULO_PRODUTIVIDADE if "produtividade" in page_norm and "upa" in page_norm else page
     if st.sidebar.button(
-        f"{pagina_icons.get(page, '📌')}  {page}",
+        f"{pagina_icons.get(page, '📌')}  {page_label}",
         key=f"menu_administrativo_{normalize_text(page)}",
         width="stretch",
         type="primary" if active else "secondary"
     ):
         st.session_state["pagina_selecionada"] = page
+
+# Botao explicito de produtividade para garantir rotulo final no menu.
+active_prod_fixo = st.session_state["pagina_selecionada"] == PAGINA_PRODUTIVIDADE
+if st.sidebar.button(
+    f"{pagina_icons.get(PAGINA_PRODUTIVIDADE, '📊')}  {ROTULO_PRODUTIVIDADE}",
+    key="menu_administrativo_produtividade_medica_upas",
+    width="stretch",
+    type="primary" if active_prod_fixo else "secondary"
+):
+    st.session_state["pagina_selecionada"] = PAGINA_PRODUTIVIDADE
 
 pagina = st.session_state["pagina_selecionada"]
 
@@ -4541,10 +4791,8 @@ if st.session_state.get("last_audit_page") != pagina or st.session_state.get("la
     st.session_state["last_audit_page"] = pagina
     st.session_state["last_audit_user"] = usuario_logado
 
-
-
-st.sidebar.markdown("## Filtros")
 default_periodo = default_previous_month_selection()
+st.sidebar.markdown("## Filtros")
 if "meses_selecionados" not in st.session_state:
     st.session_state["meses_selecionados"] = default_periodo
 
@@ -4553,8 +4801,6 @@ meses_selecionados = st.sidebar.multiselect(
     [MESES_LABEL[m] for m in MESES],
     key="meses_selecionados"
 )
-
-
 
 st.sidebar.markdown("### Atualizar base")
 upload_col1, upload_col2 = st.sidebar.columns([1, 1])
@@ -4604,8 +4850,6 @@ if data.empty:
         st.info("Nenhum arquivo Excel foi encontrado na mesma pasta do app.")
     st.stop()
 
-
-
 st.sidebar.markdown(
     f"""
     <div class="sidebar-footer-card">
@@ -4621,7 +4865,156 @@ if "mes_label" in metas_data.columns:
 else:
     metas_data = pd.DataFrame(columns=["indicador", "indicador_norm", "mes", "mes_label", "valor"])
 
+
+def render_admin_access_page():
+    if st.session_state.get("usuario_logado") != "admin":
+        st.error("Somente o admin pode acessar esta pagina.")
+        return
+
+    st.subheader("Administracao de Logins e Senhas")
+    store_summary = read_auth_store_summary()
+    st.caption(f"Persistencia local ativa em: {store_summary.get('store_path', 'indisponivel')}")
+
+    usuarios_ordenados = sorted(USUARIOS_APP.keys(), key=lambda x: str(x).lower())
+    table_rows = []
+    for username in usuarios_ordenados:
+        perms = PERMISSOES.get(username, [])
+        table_rows.append(
+            {
+                "usuario": username,
+                "origem": "local" if username in store_summary.get("users", {}) else "secrets",
+                "perfil": "admin" if "*" in perms else "padrao",
+                "permissoes": "*" if "*" in perms else ", ".join(perms),
+            }
+        )
+    if table_rows:
+        st.dataframe(pd.DataFrame(table_rows), width="stretch", hide_index=True)
+
+    paginas_opcoes = [
+        "UPA Luziânia",
+        "UPA Jardim Ingá",
+        "SAMU",
+        "HMJI",
+        "Atenção Primária",
+        "Atenção Secundária",
+        "Saúde Mental",
+        "Gestão de Pessoas",
+        "Financeiro",
+        "Metas do Plano",
+        PAGINA_PRODUTIVIDADE,
+    ]
+
+    st.markdown("### Criar novo usuario")
+    c1, c2 = st.columns(2)
+    novo_usuario = c1.text_input("Usuario novo", key="adm_new_username")
+    senha_nova = c1.text_input("Senha inicial", type="password", key="adm_new_password")
+    senha_nova_conf = c2.text_input("Confirmar senha inicial", type="password", key="adm_new_password_confirm")
+    novo_admin_total = c2.checkbox("Conceder perfil admin (*)", key="adm_new_full_access")
+    novo_permissoes = st.multiselect(
+        "Permissoes iniciais",
+        paginas_opcoes,
+        default=[PAGINA_PRODUTIVIDADE, "SAMU"],
+        key="adm_new_permissions",
+        disabled=novo_admin_total,
+    )
+    if st.button("Criar usuario", key="adm_create_user", width="stretch"):
+        usuario_norm = novo_usuario.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", usuario_norm):
+            st.error("Usuario invalido. Use 3-32 caracteres: letras, numeros, _, . ou -")
+        elif usuario_norm in USUARIOS_APP:
+            st.error("Este usuario ja existe.")
+        elif len(senha_nova) < 6:
+            st.error("Senha muito curta. Use ao menos 6 caracteres.")
+        elif senha_nova != senha_nova_conf:
+            st.error("A confirmacao da senha nao confere.")
+        else:
+            ok_pwd = set_user_password(usuario_norm, senha_nova)
+            perms_to_save = ["*"] if novo_admin_total else novo_permissoes
+            ok_perm = set_user_permissions(usuario_norm, perms_to_save)
+            if ok_pwd and ok_perm:
+                append_audit_event(
+                    event="auth_user_create",
+                    user=st.session_state.get("usuario_logado", ""),
+                    page=PAGINA_ADMIN_ACESSOS,
+                    session_id=st.session_state.get("session_id", ""),
+                    details=f"Usuario criado: {usuario_norm}",
+                )
+                st.success("Usuario criado com persistencia local.")
+                st.rerun()
+            else:
+                st.error("Falha ao gravar usuario. Verifique permissao de escrita em disco.")
+
+    st.markdown("### Alterar senha")
+    alvo_senha = st.selectbox("Usuario", usuarios_ordenados, key="adm_password_user") if usuarios_ordenados else None
+    n1, n2 = st.columns(2)
+    senha_alt = n1.text_input("Nova senha", type="password", key="adm_change_password")
+    senha_alt_conf = n2.text_input("Confirmar nova senha", type="password", key="adm_change_password_confirm")
+    if st.button("Salvar nova senha", key="adm_change_password_btn", width="stretch", disabled=not alvo_senha):
+        if len(senha_alt) < 6:
+            st.error("Senha muito curta. Use ao menos 6 caracteres.")
+        elif senha_alt != senha_alt_conf:
+            st.error("A confirmacao da senha nao confere.")
+        elif set_user_password(alvo_senha, senha_alt):
+            append_audit_event(
+                event="auth_password_change",
+                user=st.session_state.get("usuario_logado", ""),
+                page=PAGINA_ADMIN_ACESSOS,
+                session_id=st.session_state.get("session_id", ""),
+                details=f"Senha alterada para: {alvo_senha}",
+            )
+            st.success("Senha atualizada e salva em disco.")
+            st.rerun()
+        else:
+            st.error("Falha ao salvar nova senha.")
+
+    st.markdown("### Ajustar permissoes")
+    alvo_perm = st.selectbox("Usuario para permissao", usuarios_ordenados, key="adm_perm_user") if usuarios_ordenados else None
+    perms_atual = PERMISSOES.get(alvo_perm, []) if alvo_perm else []
+    admin_total = st.checkbox("Perfil admin (*)", value=("*" in perms_atual), key="adm_perm_admin")
+    selected_perms = st.multiselect(
+        "Paginas permitidas",
+        paginas_opcoes,
+        default=[] if "*" in perms_atual else [p for p in perms_atual if p in paginas_opcoes],
+        key="adm_perm_pages",
+        disabled=admin_total,
+    )
+    if st.button("Salvar permissoes", key="adm_perm_save", width="stretch", disabled=not alvo_perm):
+        perms_to_save = ["*"] if admin_total else selected_perms
+        if set_user_permissions(alvo_perm, perms_to_save):
+            append_audit_event(
+                event="auth_permissions_change",
+                user=st.session_state.get("usuario_logado", ""),
+                page=PAGINA_ADMIN_ACESSOS,
+                session_id=st.session_state.get("session_id", ""),
+                details=f"Permissoes alteradas para: {alvo_perm}",
+            )
+            st.success("Permissoes atualizadas e salvas em disco.")
+            st.rerun()
+        else:
+            st.error("Falha ao salvar permissoes.")
+
+    st.markdown("### Desativar usuario")
+    candidatos_remocao = [u for u in usuarios_ordenados if u != "admin"]
+    remover_usuario = st.selectbox("Usuario para desativar", candidatos_remocao, key="adm_remove_user") if candidatos_remocao else None
+    confirma_remocao = st.checkbox("Confirmo a desativacao deste usuario", key="adm_remove_confirm")
+    if st.button("Desativar usuario", key="adm_remove_btn", width="stretch", disabled=(not remover_usuario)):
+        if not confirma_remocao:
+            st.error("Confirme a desativacao para continuar.")
+        elif disable_user(remover_usuario):
+            append_audit_event(
+                event="auth_user_disable",
+                user=st.session_state.get("usuario_logado", ""),
+                page=PAGINA_ADMIN_ACESSOS,
+                session_id=st.session_state.get("session_id", ""),
+                details=f"Usuario desativado: {remover_usuario}",
+            )
+            st.success("Usuario desativado com persistencia local.")
+            st.rerun()
+        else:
+            st.error("Falha ao desativar usuario.")
+
 hero_header(pagina, source_name, meses_selecionados)
+st.info(f"Versao ativa do app: {BUILD_TAG}")
 
 if not usuario_pode_ver_pagina(usuario_logado, pagina):
     st.error("🚫 Você não tem acesso a esta página.")
@@ -4665,56 +5058,11 @@ elif pagina == "Gestão de Pessoas":
 elif pagina == "Financeiro":
     render_financeiro_page(financeiro_data, meses_selecionados)
 
-elif pagina == "Produtividade Médica":
+elif pagina == PAGINA_ADMIN_ACESSOS:
+    render_admin_access_page()
+
+elif pagina in [PAGINA_PRODUTIVIDADE, ROTULO_PRODUTIVIDADE]:
     render_produtividade_medica_page()
-
-elif pagina == "Auditoria de Acesso":
-    st.markdown("## 🛡️ Auditoria de Acesso")
-    st.caption("Página restrita ao usuário admin. Exibe eventos de login e acesso registrados no app.")
-
-    eventos = read_audit_events(limit=5000)
-    if not eventos:
-        st.info("Nenhum evento de auditoria encontrado até o momento.")
-    else:
-        audit_df = pd.DataFrame(eventos)
-
-        if audit_df.empty:
-            st.info("Nenhum evento disponível para exibição.")
-        else:
-            col1, col2, col3 = st.columns(3)
-            logins_df = audit_df[audit_df["event"] == "login_success"].copy()
-            acessos_df = audit_df[audit_df["event"] == "page_access"].copy()
-
-            total_logins = int(logins_df.shape[0])
-            usuarios_login = int(logins_df["user"].nunique()) if "user" in logins_df.columns else 0
-            usuarios_acesso = int(acessos_df["user"].nunique()) if "user" in acessos_df.columns else 0
-
-            col1.metric("Logins registrados", f"{total_logins}")
-            col2.metric("Usuários com login", f"{usuarios_login}")
-            col3.metric("Usuários que acessaram páginas", f"{usuarios_acesso}")
-
-            st.markdown("### Logins realizados")
-            if logins_df.empty:
-                st.caption("Ainda não há eventos de login_success.")
-            else:
-                login_cols = [c for c in ["timestamp", "user", "session_id", "details"] if c in logins_df.columns]
-                st.dataframe(logins_df[login_cols], width="stretch", hide_index=True)
-
-            st.markdown("### Usuários que acessaram páginas")
-            if acessos_df.empty:
-                st.caption("Ainda não há eventos de page_access.")
-            else:
-                resumo_usuarios = (
-                    acessos_df.groupby("user", dropna=False)["page"]
-                    .nunique()
-                    .reset_index(name="paginas_distintas")
-                    .sort_values("paginas_distintas", ascending=False)
-                )
-                st.dataframe(resumo_usuarios, width="stretch", hide_index=True)
-
-            st.markdown("### Eventos recentes")
-            eventos_cols = [c for c in ["timestamp", "event", "user", "page", "session_id", "details"] if c in audit_df.columns]
-            st.dataframe(audit_df[eventos_cols], width="stretch", hide_index=True)
 
 else:
     render_metas_page(data, metas_data, metas_total_geral_map, meses_selecionados)
@@ -4724,9 +5072,3 @@ with st.expander("Base transformada"):
         st.table(data.head(300).reset_index(drop=True))
     else:
         st.caption("Tabela oculta por padrão para reduzir erros de carregamento no navegador.")
-
-
-
-
-
-
