@@ -71,6 +71,179 @@
 				"-AllowUnchangedCode"
 			],
 			"isBackground": true
+		},
+		{
+			"label": "Streamlit: Force Start 8501",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}/start_streamlit_8501.ps1",
+				"-Port",
+				"8501",
+				"-Force",
+				"-AllowUnchangedCode",
+				"-OpenBrowser"
+			],
+			"isBackground": true
+		},
+		{
+			"label": "Debug: Streamlit Process CommandLine",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-Command",
+				"Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'python|streamlit' -and $_.CommandLine -match '8501|bi_municipio_streamlit.py' } | Select-Object ProcessId,Name,ExecutablePath,CommandLine | Format-List"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Fix runtime labels on disk",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-Command",
+				"$p='PowerBI/bi_municipio_streamlit.py'; $c=Get-Content -Raw -Encoding UTF8 $p; $c=$c -replace 'BUILD_TAG\\s*=\\s*\"[^\"]+\"','BUILD_TAG = \"PM-2026-04-27-08\"'; $c=$c -replace 'Login build: LG-2026-04-27-\\d+','Login build: LG-2026-04-27-12'; $c=$c -replace 'PAGINA_PRODUTIVIDADE\\s*=\\s*\"[^\"]+\"','PAGINA_PRODUTIVIDADE = \"Produtividade Médica UPAs\"'; Set-Content -Encoding UTF8 $p $c; Write-Host 'patched'"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Run runtime label patch script",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}/force_patch_runtime_labels.ps1"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Inspect runtime file snippets",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-Command",
+				"$p='PowerBI/bi_municipio_streamlit.py'; Write-Host '--- constants ---'; Select-String -Path $p -Pattern 'BUILD_TAG|PAGINA_PRODUTIVIDADE|ROTULO_PRODUTIVIDADE' -SimpleMatch; Write-Host '--- menu block ---'; Select-String -Path $p -Pattern 'menu_administrativo_produtividade_medica_upas|Produtividade Médica UPAs|Produtividade UPAs'"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Run inspect runtime file",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}/inspect_runtime_file.ps1"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Show runtime segments",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}/show_runtime_segments.ps1"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Show runtime segments latest",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}/show_runtime_segments.ps1"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Apply produtividade label replace",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}/force_replace_produtividade_label.ps1"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Fix produtividade encoding",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}/fix_produtividade_encoding.ps1"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Show runtime segments after replace",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}/show_runtime_segments.ps1"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Normalize produtividade label ASCII",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}/normalize_produtividade_ascii.ps1"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Show runtime segments final",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}/show_runtime_segments.ps1"
+			],
+			"isBackground": false
 		}
 	]
 }

@@ -1182,14 +1182,8 @@ def load_financeiro_data(file_bytes=None, _mtime=None):
 
 
 @st.cache_data(show_spinner=False)
-def load_produtividade_data():
-    base = Path(__file__).parent
-    path = None
-    for name in ["urgencia_tratado_validado.xlsx", "urgencia_tratado_final.xlsx"]:
-        candidate = base / name
-        if candidate.exists():
-            path = candidate
-            break
+def load_produtividade_data(_mtime=None):
+    paths = _urgencia_paths()
 
     empty = {
         "kpi_diario": pd.DataFrame(),
@@ -1200,15 +1194,26 @@ def load_produtividade_data():
         "top5_upa2": pd.DataFrame(),
         "top5_upa1": pd.DataFrame(),
     }
-    if path is None:
+    if not paths:
         return empty
 
-    xls = pd.ExcelFile(path)
-
-    def _sheet(name):
+    def _read_sheet(path, name):
+        xls = pd.ExcelFile(path)
         if name not in xls.sheet_names:
             return pd.DataFrame()
         return pd.read_excel(path, sheet_name=name)
+
+    def _concat_sheet(name):
+        frames = [_read_sheet(p, name) for p in paths]
+        frames = [f for f in frames if not f.empty]
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+    # Mantém compatibilidade com código que usa xls/_sheet internamente
+    path = paths[-1]
+    xls = pd.ExcelFile(path)
+
+    def _sheet(name):
+        return _concat_sheet(name)
 
     kpi_diario = _sheet("KPI_DIARIO_GERAL")
     kpi_diario_unidade = _sheet("KPI_DIARIO_UNIDADE")
@@ -1254,32 +1259,33 @@ def load_produtividade_data():
     }
 
 
-@st.cache_data(show_spinner=False)
-def load_samu_data():
+def _urgencia_paths():
+    """Retorna todos os arquivos urgencia*validado*.xlsx ordenados por data de modificacao."""
     base = Path(__file__).parent
-    path = None
-    for name in ["urgencia_tratado_validado.xlsx", "urgencia_tratado_final.xlsx"]:
-        candidate = base / name
-        if candidate.exists():
-            path = candidate
-            break
+    candidates = sorted(base.glob("urgencia*validado*.xlsx"), key=lambda p: p.stat().st_mtime)
+    if candidates:
+        return candidates
+    # Fallback para urgencia_tratado_final.xlsx
+    fallback = base / "urgencia_tratado_final.xlsx"
+    return [fallback] if fallback.exists() else []
 
-    empty_result = {
-        "diario": pd.DataFrame(columns=["Data", "Dia", "Descricao", "Codigo_SIGTAP", "Atendimentos"]),
-        "resumo": pd.DataFrame(columns=["Descricao", "Codigo_SIGTAP", "Total", "Falta", "Eficacia", "Meta"]),
-        "titulo": "SAMU",
-    }
 
-    if path is None:
-        return empty_result
+def _urgencia_path():
+    """Retorna o arquivo urgencia mais recente (compatibilidade)."""
+    paths = _urgencia_paths()
+    return paths[-1] if paths else None
 
-    xls = pd.ExcelFile(path)
-    if "SAMU" not in xls.sheet_names:
-        return empty_result
 
+def _samu_file_mtime():
+    paths = _urgencia_paths()
+    return sum(p.stat().st_mtime for p in paths) if paths else 0
+
+
+def _parse_samu_file(path):
+    """Lê e parseia a aba SAMU de um arquivo. Retorna (diario_rows, resumo_rows, titulo)."""
     raw = pd.read_excel(path, sheet_name="SAMU", header=None)
     if raw.empty or raw.shape[1] < 2:
-        return empty_result
+        return [], [], "SAMU"
 
     titulo = str(raw.iloc[0, 0]).strip() if pd.notna(raw.iloc[0, 0]) else "SAMU"
 
@@ -1292,7 +1298,7 @@ def load_samu_data():
             break
 
     if header_row is None:
-        return {**empty_result, "titulo": titulo}
+        return [], [], titulo
 
     header_vals = raw.iloc[header_row]
     day_cols = []
@@ -1320,18 +1326,9 @@ def load_samu_data():
             meta_col = col_idx
 
     month_map = {
-        "JANEIRO": 1,
-        "FEVEREIRO": 2,
-        "MARCO": 3,
-        "ABRIL": 4,
-        "MAIO": 5,
-        "JUNHO": 6,
-        "JULHO": 7,
-        "AGOSTO": 8,
-        "SETEMBRO": 9,
-        "OUTUBRO": 10,
-        "NOVEMBRO": 11,
-        "DEZEMBRO": 12,
+        "JANEIRO": 1, "FEVEREIRO": 2, "MARCO": 3, "ABRIL": 4,
+        "MAIO": 5, "JUNHO": 6, "JULHO": 7, "AGOSTO": 8,
+        "SETEMBRO": 9, "OUTUBRO": 10, "NOVEMBRO": 11, "DEZEMBRO": 12,
     }
     titulo_norm = normalize_text(titulo) or ""
     month_year = re.search(r"(JANEIRO|FEVEREIRO|MARCO|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO)\s+(\d{4})", titulo_norm)
@@ -1363,16 +1360,14 @@ def load_samu_data():
         efic_val = pd.to_numeric(pd.Series([row.iloc[eficacia_col]]), errors="coerce").iloc[0] if eficacia_col is not None else pd.NA
         meta_val = pd.to_numeric(pd.Series([row.iloc[meta_col]]), errors="coerce").iloc[0] if meta_col is not None else pd.NA
 
-        resumo_rows.append(
-            {
-                "Descricao": desc_text,
-                "Codigo_SIGTAP": codigo,
-                "Total": float(total_val) if pd.notna(total_val) else pd.NA,
-                "Falta": float(falta_val) if pd.notna(falta_val) else pd.NA,
-                "Eficacia": float(efic_val) if pd.notna(efic_val) else pd.NA,
-                "Meta": float(meta_val) if pd.notna(meta_val) else pd.NA,
-            }
-        )
+        resumo_rows.append({
+            "Descricao": desc_text,
+            "Codigo_SIGTAP": codigo,
+            "Total": float(total_val) if pd.notna(total_val) else pd.NA,
+            "Falta": float(falta_val) if pd.notna(falta_val) else pd.NA,
+            "Eficacia": float(efic_val) if pd.notna(efic_val) else pd.NA,
+            "Meta": float(meta_val) if pd.notna(meta_val) else pd.NA,
+        })
 
         for col_idx, day_num in day_cols:
             val = pd.to_numeric(pd.Series([row.iloc[col_idx]]), errors="coerce").iloc[0]
@@ -1386,27 +1381,59 @@ def load_samu_data():
                 except ValueError:
                     data_ref = None
 
-            diario_rows.append(
-                {
-                    "Data": pd.to_datetime(data_ref) if data_ref is not None else pd.NaT,
-                    "Dia": day_num,
-                    "Descricao": desc_text,
-                    "Codigo_SIGTAP": codigo,
-                    "Atendimentos": float(val),
-                }
-            )
+            diario_rows.append({
+                "Data": pd.to_datetime(data_ref) if data_ref is not None else pd.NaT,
+                "Dia": day_num,
+                "Descricao": desc_text,
+                "Codigo_SIGTAP": codigo,
+                "Atendimentos": float(val),
+            })
 
-    diario_df = pd.DataFrame(diario_rows)
-    resumo_df = pd.DataFrame(resumo_rows)
+    return diario_rows, resumo_rows, titulo
+
+
+@st.cache_data(show_spinner=False)
+def load_samu_data(_mtime=None):
+    paths = _urgencia_paths()
+
+    empty_result = {
+        "diario": pd.DataFrame(columns=["Data", "Dia", "Descricao", "Codigo_SIGTAP", "Atendimentos"]),
+        "resumo": pd.DataFrame(columns=["Descricao", "Codigo_SIGTAP", "Total", "Falta", "Eficacia", "Meta"]),
+        "titulo": "SAMU",
+    }
+
+    if not paths:
+        return empty_result
+
+    all_diario = []
+    all_resumo = []
+    titulos = []
+
+    for p in paths:
+        xls_check = pd.ExcelFile(p)
+        if "SAMU" not in xls_check.sheet_names:
+            continue
+        d_rows, r_rows, titulo = _parse_samu_file(p)
+        all_diario.extend(d_rows)
+        all_resumo.extend(r_rows)
+        titulos.append(titulo)
+
+    if not all_diario and not all_resumo:
+        return empty_result
+
+    diario_df = pd.DataFrame(all_diario)
+    resumo_df = pd.DataFrame(all_resumo)
 
     if not diario_df.empty:
         diario_df["Atendimentos"] = pd.to_numeric(diario_df["Atendimentos"], errors="coerce")
         diario_df = diario_df.dropna(subset=["Atendimentos"]).copy()
 
+    titulo_final = " · ".join(titulos) if titulos else "SAMU"
+
     return {
         "diario": diario_df,
         "resumo": resumo_df,
-        "titulo": titulo,
+        "titulo": titulo_final,
     }
 
 
@@ -3997,7 +4024,7 @@ def render_rh_page(df, meses_filtrados):
 
 
 def render_produtividade_medica_page():
-    prod = load_produtividade_data()
+    prod = load_produtividade_data(_mtime=_samu_file_mtime())
     kd = prod["kpi_diario"].copy()
     ku = prod["kpi_diario_unidade"].copy()
     ks = prod["kpi_semanal"].copy()
@@ -4179,7 +4206,7 @@ def render_produtividade_medica_page():
 
 
 def render_samu_page():
-    samu = load_samu_data()
+    samu = load_samu_data(_mtime=_samu_file_mtime())
     diario = samu["diario"].copy()
     resumo = samu["resumo"].copy()
     titulo = samu.get("titulo", "SAMU")
@@ -4198,8 +4225,6 @@ def render_samu_page():
         periodo = st.date_input(
             "Período",
             value=(data_min, data_max),
-            min_value=data_min,
-            max_value=data_max,
             key="samu_periodo",
         )
     else:
@@ -4803,7 +4828,7 @@ meses_selecionados = st.sidebar.multiselect(
 )
 
 st.sidebar.markdown("### Atualizar base")
-upload_col1, upload_col2 = st.sidebar.columns([1, 1])
+upload_col1, upload_col2, upload_col3 = st.sidebar.columns([1, 1, 1])
 
 with upload_col1:
     abrir_upload = st.button("📁 Atualizar", width="stretch", key="footer_upload_open")
@@ -4811,8 +4836,21 @@ with upload_col1:
 with upload_col2:
     limpar_upload = st.button("✖", width="stretch", key="footer_upload_clear")
 
+with upload_col3:
+    sincronizar = st.button("🔄 Sync", width="stretch", key="footer_sync_local")
+
 if limpar_upload:
     st.session_state.pop("uploaded_file", None)
+    st.rerun()
+
+if sincronizar:
+    st.session_state.pop("uploaded_file", None)
+    load_workbook_data.clear()
+    load_metas_data.clear()
+    load_financeiro_data.clear()
+    load_metas_total_geral_map.clear()
+    load_samu_data.clear()
+    load_produtividade_data.clear()
     st.rerun()
 
 uploaded = None
