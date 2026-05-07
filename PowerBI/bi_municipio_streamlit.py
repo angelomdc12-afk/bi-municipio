@@ -4,6 +4,7 @@ from io import BytesIO
 from pathlib import Path
 import base64
 import html
+import os
 import re
 
 import openpyxl
@@ -30,7 +31,8 @@ BUILD_TAG = "PM-2026-04-27-08"
 PAGINA_PRODUTIVIDADE = "Produtividade UPAs"
 ROTULO_PRODUTIVIDADE = "Produtividade Médica UPAs"
 PAGINA_ADMIN_ACESSOS = "Administracao de Acessos"
-PAGINAS_LIBERADAS_GLOBAL = {"SAMU", PAGINA_PRODUTIVIDADE, ROTULO_PRODUTIVIDADE, "Produtividade Upas"}
+PAGINA_HEATMAP = "Mapa de Calor"
+PAGINAS_LIBERADAS_GLOBAL = {"SAMU", PAGINA_PRODUTIVIDADE, ROTULO_PRODUTIVIDADE, "Produtividade Upas", PAGINA_HEATMAP}
 
 
 def get_local_build_stamp():
@@ -1178,6 +1180,99 @@ def load_financeiro_data(file_bytes=None, _mtime=None):
 
     df["mes"] = pd.Categorical(df["mes"], categories=MESES, ordered=True)
     df = df.sort_values(["grupo_norm", "fornecedor_norm", "mes"]).reset_index(drop=True)
+    return df
+
+
+
+# ---------------------------------------------------------------------------
+# LOADER CELK — dados transacionais brutos (linha por atendimento)
+# ---------------------------------------------------------------------------
+
+def _celk_paths():
+    """Retorna todos os arquivos CELK presentes em data_raw/, ordenados por mtime."""
+    import glob as _glob
+    base_dir = os.path.join(os.path.dirname(__file__), "data_raw")
+    if not os.path.isdir(base_dir):
+        return []
+    pattern = os.path.join(base_dir, "producao_consolidada_*.xlsx")
+    files = sorted(_glob.glob(pattern), key=os.path.getmtime)
+    return files
+
+
+def _celk_mtime():
+    paths = _celk_paths()
+    return sum(int(os.path.getmtime(p) * 1000) for p in paths) if paths else 0
+
+
+@st.cache_data(show_spinner=False)
+def load_celk_data(_mtime=None):
+    """
+    Lê os arquivos CELK da pasta data_raw e retorna DataFrame normalizado.
+    Colunas resultantes: DATA (datetime), PACIENTE, CARTAO_SUS, IDADE,
+    TIPO_ATENDIMENTO, CODIGO_SIGTAP, DESCRICAO_PROCEDIMENTO, PROFISSIONAL, UNIDADE,
+    + derivadas: HORA (int), DIA_SEMANA (str PT-BR), DIA_MES (int),
+    MES_LABEL (str), SEMANA_MES (str S1-S6).
+    """
+    paths = _celk_paths()
+    if not paths:
+        return pd.DataFrame()
+
+    frames = []
+    for path in paths:
+        try:
+            df = pd.read_excel(
+                path,
+                sheet_name=0,
+                usecols="A:I",
+                dtype=str,
+            )
+            frames.append(df)
+        except Exception:
+            pass
+
+    if not frames:
+        return pd.DataFrame()
+
+    df = pd.concat(frames, ignore_index=True)
+
+    # Normaliza nomes de coluna
+    df.columns = [c.strip().upper() for c in df.columns]
+    rename_map = {
+        "DESCRIÇÃO DO PROCEDIMENTO": "DESCRICAO_PROCEDIMENTO",
+        "DESCRICAO DO PROCEDIMENTO": "DESCRICAO_PROCEDIMENTO",
+        "DESCRI\u00c7\u00c3O DO PROCEDIMENTO": "DESCRICAO_PROCEDIMENTO",
+    }
+    df.rename(columns=rename_map, inplace=True)
+
+    # Parse DATA → datetime
+    df["DATA"] = pd.to_datetime(df["DATA"], errors="coerce", dayfirst=True)
+    df = df.dropna(subset=["DATA"])
+
+    # Campos numéricos
+    if "IDADE" in df.columns:
+        df["IDADE"] = pd.to_numeric(df["IDADE"], errors="coerce")
+
+    # Derivadas temporais
+    _dow_map = {0: "Segunda", 1: "Terça", 2: "Quarta", 3: "Quinta", 4: "Sexta", 5: "Sábado", 6: "Domingo"}
+    df["HORA"] = df["DATA"].dt.hour.astype(int)
+    df["DIA_MES"] = df["DATA"].dt.day.astype(int)
+    df["DIA_SEMANA"] = df["DATA"].dt.dayofweek.map(_dow_map)
+    df["MES_LABEL"] = df["DATA"].dt.to_period("M").dt.strftime("%b/%y").str.capitalize()
+    df["SEMANA_MES"] = df["DATA"].dt.day.apply(lambda d: f"S{(d - 1) // 7 + 1}")
+
+    # Normaliza UNIDADE
+    if "UNIDADE" in df.columns:
+        df["UNIDADE"] = df["UNIDADE"].str.strip()
+        df["UNIDADE_NORM"] = df["UNIDADE"].str.upper()
+        # Mapeamento para rótulos do painel
+        _unit_map = {}
+        for val in df["UNIDADE_NORM"].dropna().unique():
+            if "PRONTO ATENDIMENTO" in val and "INGA" in val:
+                _unit_map[val] = "UPA I Jardim Ingá"
+            elif "PRONTO ATENDIMENTO" in val and "UPA" in val:
+                _unit_map[val] = "UPA II Luziânia"
+        df["UNIDADE_PAINEL"] = df["UNIDADE_NORM"].map(_unit_map)
+
     return df
 
 
@@ -3332,22 +3427,29 @@ def pie_latest(df, title, color_map=None, prefix="pie", unidade=None):
     )
 
     plot(fig, prefix)
-def render_upa_page(df, unidade):
+def render_upa_page(df, unidade, meses_filtrados=None):
     st.subheader(unidade)
 
-    recep = filter_panel(df, unidade, "PACIENTES RECEPCIONADOS")
-    atend_med = filter_panel(df, unidade, "ATENDIMENTOS MÉDICOS")
-    risco = filter_panel(df, unidade, "ATENDIMENTOS POR CLASSIFICAÇÃO DE RISCO")
-    perc_risco = filter_panel(df, unidade, "PERCENTUAL DE ATENDIMENTOS POR CLASSIFICAÇÃO DE RISCOS")
-    espera = filter_panel(df, unidade, "TEMPO DE ESPERA PARA CLASSIFICAÇÃO DE RISCO")
-    tempo_med = filter_panel(df, unidade, "TEMPO MÉDIO DE ESPERA DE ATENDIMENTO MÉDICO POR CLASSIFICAÇÃO DE RISCO")
-    intern = filter_panel(df, unidade, "TEMPO DE PERMANÊNCIA DE PACIENTES INTERNADOS")
-    semint = filter_panel(df, unidade, "TEMPO DE PERMANÊNCIA DE PACIENTES SEM INTERNAÇÃO")
-    transf = filter_panel(df, unidade, "TRANSFERÊNCIAS (REMOÇÕES)")
-    exames = filter_panel(df, unidade, "EXAMES INTERNOS")
-    faixa = filter_panel(df, unidade, "ATENDIMENTOS DIVIDIDOS POR FAIXA ETARIA")
-    origem = filter_panel(df, unidade, "ATENDIMENTOS DE  PACIENTES")
-    obitos = filter_panel(df, unidade, "ÓBITOS")
+    def _mf(panel_df):
+        if panel_df is None or panel_df.empty:
+            return panel_df
+        if meses_filtrados and "mes_label" in panel_df.columns:
+            return panel_df[panel_df["mes_label"].isin(meses_filtrados)].copy()
+        return panel_df
+
+    recep = _mf(filter_panel(df, unidade, "PACIENTES RECEPCIONADOS"))
+    atend_med = _mf(filter_panel(df, unidade, "ATENDIMENTOS MÉDICOS"))
+    risco = _mf(filter_panel(df, unidade, "ATENDIMENTOS POR CLASSIFICAÇÃO DE RISCO"))
+    perc_risco = _mf(filter_panel(df, unidade, "PERCENTUAL DE ATENDIMENTOS POR CLASSIFICAÇÃO DE RISCOS"))
+    espera = _mf(filter_panel(df, unidade, "TEMPO DE ESPERA PARA CLASSIFICAÇÃO DE RISCO"))
+    tempo_med = _mf(filter_panel(df, unidade, "TEMPO MÉDIO DE ESPERA DE ATENDIMENTO MÉDICO POR CLASSIFICAÇÃO DE RISCO"))
+    intern = _mf(filter_panel(df, unidade, "TEMPO DE PERMANÊNCIA DE PACIENTES INTERNADOS"))
+    semint = _mf(filter_panel(df, unidade, "TEMPO DE PERMANÊNCIA DE PACIENTES SEM INTERNAÇÃO"))
+    transf = _mf(filter_panel(df, unidade, "TRANSFERÊNCIAS (REMOÇÕES)"))
+    exames = _mf(filter_panel(df, unidade, "EXAMES INTERNOS"))
+    faixa = _mf(filter_panel(df, unidade, "ATENDIMENTOS DIVIDIDOS POR FAIXA ETARIA"))
+    origem = _mf(filter_panel(df, unidade, "ATENDIMENTOS DE  PACIENTES"))
+    obitos = _mf(filter_panel(df, unidade, "ÓBITOS"))
 
     section_start("Resumo executivo", "Visão consolidada dos principais indicadores da unidade")
     c1, c2, c3, c4 = st.columns(4)
@@ -3597,11 +3699,14 @@ def render_upa_page(df, unidade):
         )
     section_end()
 
-def render_hmji(df):
+def render_hmji(df, meses_filtrados=None):
     unidade = "HMJI"
     st.subheader(unidade)
 
     unit_df = df[df["unidade"] == unidade].copy()
+    if meses_filtrados and "mes_label" in unit_df.columns:
+        unit_df = unit_df[unit_df["mes_label"].isin(meses_filtrados)].copy()
+
     clin = df[
         (df["unidade"] == unidade) &
         (
@@ -3609,6 +3714,8 @@ def render_hmji(df):
             df["serie_norm"].str.contains("PACIENTES CLINICOS", na=False)
         )
     ].copy()
+    if meses_filtrados and "mes_label" in clin.columns:
+        clin = clin[clin["mes_label"].isin(meses_filtrados)].copy()
 
     meses_base = [m for m in unit_df["mes"].dropna().tolist() if pd.notna(m)]
     meses_base = list(dict.fromkeys(meses_base))
@@ -3668,6 +3775,8 @@ def render_hmji(df):
         return merged.sort_values(["mes", "serie"])
 
     obitos = filter_panel(df, unidade, "ÓBITOS")
+    if meses_filtrados and "mes_label" in obitos.columns:
+        obitos = obitos[obitos["mes_label"].isin(meses_filtrados)].copy()
     obitos = obitos[obitos["serie_norm"].isin(["TOTAL", "ÓBITOS", "OBITOS"])].copy()
     esp = hmji_block({
         "CIRURGIA GERAL": ["CIRURGIA GERAL"],
@@ -4301,25 +4410,6 @@ def render_samu_page():
         )
 
     section_start("Metas mensais prioritárias", "Indicadores críticos com meta mensal definida")
-    st.markdown(
-        """
-        <style>
-        .samu-meta-title {
-            font-size: 0.98rem;
-            font-weight: 800;
-            letter-spacing: 0.2px;
-            line-height: 1.25;
-            height: 6.2em;
-            display: flex;
-            align-items: flex-end;
-            margin: 0 0 0.4rem 0;
-            color: #1e293b;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
     metas_samu = [
         {
             "descricao": "ATENDIMENTO REALIZADO PELA USA TERRESTRE (COM ENVIO DA VIATURA)",
@@ -4352,29 +4442,16 @@ def render_samu_page():
             )
             realizado = float(procedimentos_total.loc[mask, "Atendimentos"].sum()) if mask.any() else 0.0
             meta_mensal = float(meta_cfg["meta_mensal"])
-            atingimento = (realizado / meta_mensal) if meta_mensal > 0 else 0.0
-            falta_ou_excedente = realizado - meta_mensal
+            atingimento_pct = ((realizado / meta_mensal) * 100) if meta_mensal > 0 else None
+            saldo_pct = (((realizado - meta_mensal) / meta_mensal) * 100) if meta_mensal > 0 else None
 
-            st.markdown(
-                f'<div class="samu-meta-title">{meta_cfg["descricao"]}</div>',
-                unsafe_allow_html=True,
+            render_meta_card(
+                meta_cfg["descricao"],
+                realizado,
+                meta_mensal,
+                atingimento_pct,
+                saldo_pct,
             )
-            top_kpi_card(
-                "Realizado no período",
-                f"{realizado:,.1f}".replace(",", "."),
-                icon="🎯",
-                subtitle=f"Meta mensal: {meta_mensal:,.1f}".replace(",", "."),
-                accent_color=SEMANTIC_COLORS["primary"],
-                subtitle_color=SEMANTIC_COLORS["primary"],
-            )
-
-            pct_txt = f"{atingimento * 100:,.1f}%".replace(",", ".")
-            saldo_txt = f"{abs(falta_ou_excedente):,.1f}".replace(",", ".")
-
-            if falta_ou_excedente >= 0:
-                st.success(f"Meta atingida. Excedente: {saldo_txt} | Atingimento: {pct_txt}")
-            else:
-                st.warning(f"Faltam {saldo_txt} para a meta mensal | Atingimento: {pct_txt}")
     section_end()
 
     section_start("Evolução diária", "Atendimentos totais por dia")
@@ -4514,6 +4591,366 @@ def render_samu_page():
         use_container_width=True,
     )
     section_end()
+
+
+# ---------------------------------------------------------------------------
+# MAPA DE CALOR — página dedicada
+# ---------------------------------------------------------------------------
+
+_DIAS_SEMANA_PT = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"]
+_DIAS_SEMANA_ORDER = {d: i for i, d in enumerate(_DIAS_SEMANA_PT)}
+
+_HEATMAP_COLORSCALE = [
+    [0.0,  "#63BE7B"],   # verde  — mínimo  (igual Excel)
+    [0.5,  "#FFEB84"],   # amarelo — p50    (igual Excel)
+    [1.0,  "#F8696B"],   # vermelho — máximo (igual Excel)
+]
+
+
+def _heatmap_fig(matrix_df, title, x_label, y_label, colorscale=None, fmt=".0f", height=320):
+    """Gera go.Heatmap padronizado a partir de um DataFrame pivotado (linhas=y, colunas=x)."""
+    import plotly.graph_objects as go
+
+    z = matrix_df.values
+    x = list(matrix_df.columns)
+    y = list(matrix_df.index)
+
+    text = [[f"{v:{fmt}}" if pd.notna(v) else "" for v in row] for row in z]
+
+    # Calcula zmin/zmax excluindo a linha TOTAL (para não comprimir a escala de cores)
+    mask = [lbl != "TOTAL" for lbl in y]
+    z_no_total = [row for row, keep in zip(z, mask) if keep]
+    import numpy as np
+    flat = [v for row in z_no_total for v in row if v is not None and not (isinstance(v, float) and np.isnan(v))]
+    zmin_val = min(flat) if flat else None
+    zmax_val = max(flat) if flat else None
+
+    fig = go.Figure(
+        go.Heatmap(
+            z=z,
+            x=x,
+            y=y,
+            text=text,
+            texttemplate="%{text}",
+            textfont={"size": 11, "color": "#1a1a1a"},
+            colorscale=colorscale or _HEATMAP_COLORSCALE,
+            zmin=zmin_val,
+            zmax=zmax_val,
+            hoverongaps=False,
+            showscale=True,
+        )
+    )
+    fig.update_layout(
+        title={"text": title, "font": {"size": 15, "color": "#e0e0e0"}, "x": 0.02},
+        xaxis_title=x_label,
+        yaxis_title=y_label,
+        height=height,
+        margin={"l": 155, "r": 60, "t": 50, "b": 60},
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#e0e0e0"},
+        xaxis={"gridcolor": "rgba(0,0,0,0)", "tickfont": {"color": "#e0e0e0"}, "side": "top"},
+        yaxis={"gridcolor": "rgba(0,0,0,0)", "autorange": "reversed", "tickfont": {"color": "#e0e0e0"}},
+    )
+    return fig
+
+
+def render_heatmap_page():
+    """
+    Página dedicada: Mapa de Calor — dados transacionais CELK (hora × dia da semana).
+    Fallback para dados KPI agregados quando o arquivo CELK não está disponível.
+    """
+    import plotly.graph_objects as go
+
+    _DOW_ORDER = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
+
+    # ── Tenta carregar dados CELK (ricos, por hora) ──────────────────────
+    celk = load_celk_data(_mtime=_celk_mtime())
+    has_celk = celk is not None and not celk.empty
+
+    if has_celk:
+        # Unidades detectadas no CELK
+        unidades_celk = sorted(
+            [u for u in celk["UNIDADE_PAINEL"].dropna().unique()
+             if u in ("UPA II Luziânia", "UPA I Jardim Ingá")],
+            key=lambda x: (0 if "II" in x else 1)
+        )
+        # Ordena meses cronologicamente e filtra outliers (>= 50 registros no mês)
+        _mes_counts = celk["MES_LABEL"].value_counts()
+        _mes_validos = _mes_counts[_mes_counts >= 50].index.tolist()
+        meses_celk = sorted(
+            [m for m in celk["MES_LABEL"].dropna().unique() if m in _mes_validos],
+            key=lambda m: pd.to_datetime(m, format="%b/%y", errors="coerce")
+        )
+        # Padrão: preferir "Mar/26" se disponível, senão o mês com mais dados
+        _todos_meses_list = ["Todos"] + meses_celk
+        if "Mar/26" in meses_celk:
+            _idx_mes_default = _todos_meses_list.index("Mar/26")
+        else:
+            _mes_dominante = _mes_counts.idxmax() if not _mes_counts.empty else None
+            _idx_mes_default = _todos_meses_list.index(_mes_dominante) if _mes_dominante in meses_celk else len(meses_celk)
+    else:
+        st.info("📁 Arquivo CELK não encontrado em `PowerBI/data_raw/`. Exibindo dados agregados.")
+
+    # ════════════════════════════════════════════════════════════════════
+    # SEÇÃO 1 — Hora × Dia da Semana  (CELK)
+    # ════════════════════════════════════════════════════════════════════
+    if has_celk:
+        section_start(
+            "🕐 Heatmap de Fluxo Horário — Hora × Dia da Semana",
+            "Concentração de atendimentos por hora do dia e dia da semana "
+            "(cada célula = total de registros no período selecionado)"
+        )
+
+        col_f1, col_f2, col_f3 = st.columns([2, 2, 1])
+        mes_hora = col_f1.selectbox(
+            "Mês",
+            ["Todos"] + meses_celk,
+            index=_idx_mes_default,  # mês com mais dados por padrão
+            key="hm_celk_mes_hora",
+        )
+        unidade_hora = col_f2.selectbox(
+            "Unidade",
+            unidades_celk if unidades_celk else ["UPA II Luziânia", "UPA I Jardim Ingá"],
+            key="hm_celk_unidade_hora",
+        )
+        metrica_hora = col_f3.selectbox(
+            "Métrica",
+            ["Média/dia", "Total", "Pacientes únicos"],
+            key="hm_celk_metrica_hora",
+        )
+
+        df_h = celk[celk["UNIDADE_PAINEL"] == unidade_hora].copy()
+        if mes_hora != "Todos":
+            df_h = df_h[df_h["MES_LABEL"] == mes_hora]
+
+        if df_h.empty:
+            st.warning("Sem dados para o filtro selecionado.")
+        else:
+            if metrica_hora == "Pacientes únicos":
+                raw = (
+                    df_h.groupby(["HORA", "DIA_SEMANA"])["PACIENTE"]
+                    .nunique()
+                    .reset_index()
+                    .pivot(index="HORA", columns="DIA_SEMANA", values="PACIENTE")
+                )
+                fmt_str = ".0f"
+            elif metrica_hora == "Média/dia":
+                # Conta dias únicos para calcular média por dia da semana
+                dias_por_dow = df_h.groupby("DIA_SEMANA")["DATA"].apply(lambda s: s.dt.date.nunique())
+                contagem = (
+                    df_h.groupby(["HORA", "DIA_SEMANA"])
+                    .size()
+                    .reset_index(name="QTD")
+                    .pivot(index="HORA", columns="DIA_SEMANA", values="QTD")
+                )
+                raw = contagem.div(dias_por_dow).round(1)
+                fmt_str = ".1f"
+            else:  # Total
+                raw = (
+                    df_h.groupby(["HORA", "DIA_SEMANA"])
+                    .size()
+                    .reset_index(name="QTD")
+                    .pivot(index="HORA", columns="DIA_SEMANA", values="QTD")
+                )
+                fmt_str = ".0f"
+
+            # Garante ordem dos dias e horas (reindex full para sempre mostrar 7 colunas)
+            raw = raw.reindex(columns=_DOW_ORDER)
+            raw = raw.reindex(sorted(raw.index))
+
+            # Adiciona linha TOTAL
+            total_row = raw.sum(axis=0)
+            pivot_hora = pd.concat([raw, total_row.rename("TOTAL").to_frame().T])
+
+            # Rótulos de hora estilo "08:00 às 08:59"
+            hora_labels = [
+                f"{int(h):02d}:00 às {int(h):02d}:59" if h != "TOTAL" else "TOTAL"
+                for h in pivot_hora.index
+            ]
+            pivot_hora.index = hora_labels
+            pivot_hora.index.name = "Hora"
+            pivot_hora.columns.name = "Dia da Semana"
+
+            titulo = f"{unidade_hora} — {metrica_hora} por Hora × Dia da Semana"
+            if mes_hora != "Todos":
+                titulo += f"  ({mes_hora})"
+
+            fig = _heatmap_fig(pivot_hora, titulo, "Dia da Semana", "Hora do Dia", height=700, fmt=fmt_str)
+            st.plotly_chart(fig, use_container_width=True)
+
+            # KPIs de pico (exclui linha TOTAL)
+            pivot_sem_total = pivot_hora.drop("TOTAL", errors="ignore")
+            k1, k2, k3, k4 = st.columns(4)
+            pico_hora_lbl = pivot_sem_total.sum(axis=1).idxmax()
+            pico_dia_lbl = pivot_sem_total.sum(axis=0).idxmax()
+            total_atend = int(raw.sum().sum())
+            media_hora = round(raw.sum(axis=1).mean(), 1)
+            k1.metric("🔺 Hora de pico", pico_hora_lbl)
+            k2.metric("📅 Dia de pico", pico_dia_lbl)
+            k3.metric("🔢 Total no período", f"{total_atend:,}")
+            k4.metric("⌀ Média/hora", f"{media_hora:,.1f}")
+
+        section_end()
+
+    # ════════════════════════════════════════════════════════════════════
+    # SEÇÃO 2 — Calendário diário (Semana × Dia da Semana)  (CELK)
+    # ════════════════════════════════════════════════════════════════════
+    if has_celk:
+        section_start(
+            "📅 Calendário Mensal de Atendimentos",
+            "Volume por semana do mês × dia da semana — "
+            "estilo calendário, útil para identificar semanas atípicas"
+        )
+
+        col_c1, col_c2 = st.columns([2, 2])
+        mes_cal = col_c1.selectbox("Mês", meses_celk, index=len(meses_celk) - 1, key="hm_celk_mes_cal")
+        unidade_cal = col_c2.selectbox("Unidade", unidades_celk if unidades_celk else ["UPA II Luziânia", "UPA I Jardim Ingá"], key="hm_celk_unidade_cal")
+
+        df_cal = celk[(celk["UNIDADE_PAINEL"] == unidade_cal) & (celk["MES_LABEL"] == mes_cal)].copy()
+
+        if df_cal.empty:
+            st.warning("Sem dados para o filtro selecionado.")
+        else:
+            pivot_cal = (
+                df_cal.groupby(["SEMANA_MES", "DIA_SEMANA"])
+                .size()
+                .reset_index(name="QTD")
+                .pivot(index="SEMANA_MES", columns="DIA_SEMANA", values="QTD")
+            )
+            pivot_cal = pivot_cal.reindex(columns=[d for d in _DOW_ORDER if d in pivot_cal.columns])
+            semana_order = [f"S{i}" for i in range(1, 7)]
+            pivot_cal = pivot_cal.reindex([s for s in semana_order if s in pivot_cal.index])
+
+            fig_cal = _heatmap_fig(
+                pivot_cal,
+                f"{unidade_cal} — Calendário {mes_cal}",
+                "Dia da Semana",
+                "Semana do Mês",
+            )
+            st.plotly_chart(fig_cal, use_container_width=True)
+
+        section_end()
+
+    # ════════════════════════════════════════════════════════════════════
+    # SEÇÃO 3 — Padrão semanal por mês  (CELK ou KPI agregado)
+    # ════════════════════════════════════════════════════════════════════
+    section_start(
+        "📊 Padrão Semanal por Mês",
+        "Média de atendimentos por dia da semana em cada mês "
+        "— revela tendências persistentes (dia mais movimentado)"
+    )
+
+    if has_celk and unidades_celk:
+        tabs_b = st.tabs(unidades_celk)
+        for tab, unid in zip(tabs_b, unidades_celk):
+            with tab:
+                sub = celk[celk["UNIDADE_PAINEL"] == unid].copy()
+                if sub.empty:
+                    st.info("Sem dados.")
+                    continue
+                # Calcula média de atendimentos por dia da semana em cada mês
+                # (divide total de atendimentos pelo nº de dias daquele dia-da-semana no mês)
+                dias_unicos = (
+                    sub.groupby(["MES_LABEL", "DIA_SEMANA"])["DATA"]
+                    .apply(lambda s: s.dt.date.nunique())
+                    .reset_index(name="N_DIAS")
+                )
+                contagem_b = (
+                    sub.groupby(["MES_LABEL", "DIA_SEMANA"])
+                    .size()
+                    .reset_index(name="QTD")
+                )
+                merged_b = contagem_b.merge(dias_unicos, on=["MES_LABEL", "DIA_SEMANA"])
+                merged_b["MEDIA"] = (merged_b["QTD"] / merged_b["N_DIAS"]).round(1)
+                pivot_b = merged_b.pivot(index="MES_LABEL", columns="DIA_SEMANA", values="MEDIA")
+                pivot_b = pivot_b.reindex(columns=[d for d in _DOW_ORDER if d in pivot_b.columns])
+                pivot_b = pivot_b.reindex([m for m in meses_celk if m in pivot_b.index])
+                fig_b = _heatmap_fig(
+                    pivot_b,
+                    f"{unid} — Média de Atendimentos por Dia da Semana × Mês",
+                    "Dia da Semana", "Mês",
+                    fmt=".1f",
+                )
+                st.plotly_chart(fig_b, use_container_width=True)
+    else:
+        # Fallback KPI agregado (dados pré-existentes)
+        prod = load_produtividade_data(_mtime=_samu_file_mtime())
+        kpi_geral = prod.get("kpi_diario", pd.DataFrame())
+        if kpi_geral.empty:
+            st.info("Sem dados disponíveis.")
+        else:
+            dg = kpi_geral.copy()
+            dg["Data"] = pd.to_datetime(dg["Data"], errors="coerce")
+            dg = dg.dropna(subset=["Data"])
+            _dow_map_f = {0: "Segunda", 1: "Terça", 2: "Quarta", 3: "Quinta", 4: "Sexta", 5: "Sábado", 6: "Domingo"}
+            dg["DIA_SEMANA"] = dg["Data"].dt.dayofweek.map(_dow_map_f)
+            dg["MES_LABEL"] = dg["Data"].dt.to_period("M").dt.strftime("%b/%y").str.capitalize()
+            meses_f = sorted(dg["MES_LABEL"].dropna().unique().tolist())
+            col_u2 = next((c for c in dg.columns if "luzi" in c.lower()), None)
+            col_u1 = next((c for c in dg.columns if "jardim" in c.lower()), None)
+            unidades_f = {}
+            if col_u2: unidades_f["UPA II Luziânia"] = col_u2
+            if col_u1: unidades_f["UPA I Jardim Ingá"] = col_u1
+            tabs_fb = st.tabs(list(unidades_f.keys())) if unidades_f else []
+            for tab, (label, col_val) in zip(tabs_fb, unidades_f.items()):
+                with tab:
+                    dg[col_val] = pd.to_numeric(dg[col_val], errors="coerce")
+                    pivot_fb = dg.groupby(["MES_LABEL", "DIA_SEMANA"])[col_val].mean().reset_index().pivot(
+                        index="MES_LABEL", columns="DIA_SEMANA", values=col_val
+                    )
+                    pivot_fb = pivot_fb.reindex(columns=[d for d in _DOW_ORDER if d in pivot_fb.columns])
+                    pivot_fb = pivot_fb.reindex([m for m in meses_f if m in pivot_fb.index])
+                    fig_fb = _heatmap_fig(pivot_fb, f"{label} — Média/dia da semana × Mês", "Dia da Semana", "Mês", fmt=".1f")
+                    st.plotly_chart(fig_fb, use_container_width=True)
+
+    section_end()
+
+    # ════════════════════════════════════════════════════════════════════
+    # SEÇÃO 4 — Turno (Diurno × Noturno) via CELK  (hora 07–19 = diurno)
+    # ════════════════════════════════════════════════════════════════════
+    if has_celk:
+        section_start(
+            "🌓 Turno × Dia (Diurno / Noturno)",
+            "Atendimentos por turno ao longo dos dias do mês "
+            "(Diurno: 07h–18h59 | Noturno: 19h–06h59)"
+        )
+
+        col_t1, col_t2 = st.columns([2, 2])
+        mes_turno = col_t1.selectbox("Mês", meses_celk, index=len(meses_celk) - 1, key="hm_celk_mes_turno")
+        unidade_turno = col_t2.selectbox("Unidade", unidades_celk if unidades_celk else ["UPA II Luziânia"], key="hm_celk_unidade_turno")
+
+        df_t = celk[(celk["UNIDADE_PAINEL"] == unidade_turno) & (celk["MES_LABEL"] == mes_turno)].copy()
+        if df_t.empty:
+            st.warning("Sem dados para o filtro selecionado.")
+        else:
+            df_t["TURNO"] = df_t["HORA"].apply(lambda h: "Diurno" if 7 <= h < 19 else "Noturno")
+            df_t["DIA_STR"] = df_t["DATA"].dt.strftime("%d/%m")
+            dias_ordem = sorted(df_t["DIA_STR"].unique())
+            pivot_t = (
+                df_t.groupby(["TURNO", "DIA_STR"])
+                .size()
+                .reset_index(name="QTD")
+                .pivot(index="TURNO", columns="DIA_STR", values="QTD")
+            )
+            pivot_t = pivot_t.reindex(columns=[d for d in dias_ordem if d in pivot_t.columns])
+            pivot_t = pivot_t.reindex(["Diurno", "Noturno"])
+            fig_t = _heatmap_fig(
+                pivot_t,
+                f"{unidade_turno} — Atendimentos por Turno × Dia ({mes_turno})",
+                "Data",
+                "Turno",
+                colorscale=[
+                    [0.0, "#1a2744"],
+                    [0.3, "#2563eb"],
+                    [0.65, "#f59e0b"],
+                    [1.0, "#ef4444"],
+                ],
+            )
+            st.plotly_chart(fig_t, use_container_width=True)
+
+        section_end()
+
 
 st.sidebar.markdown(
     f"""
@@ -4688,6 +5125,7 @@ paginas_unidades = [
     "UPA Jardim Ingá",
     "SAMU",
     "HMJI",
+    PAGINA_HEATMAP,
 ]
 
 paginas_basicas = [
@@ -4720,6 +5158,7 @@ pagina_icons = {
     PAGINA_ADMIN_ACESSOS: "🔐",
     PAGINA_PRODUTIVIDADE: "📈",
     "Produtividade UPAs": "📊",
+    PAGINA_HEATMAP: "🔥",
 }
 
 paginas_disponiveis = [
@@ -5059,16 +5498,16 @@ if not usuario_pode_ver_pagina(usuario_logado, pagina):
     st.stop()
 
 if pagina == "UPA Luziânia":
-    render_upa_page(data, "UPA DE LUZIÂNIA - UPA II")
+    render_upa_page(data, "UPA DE LUZIÂNIA - UPA II", meses_selecionados)
 
 elif pagina == "UPA Jardim Ingá":
-    render_upa_page(data, "UPA JARDIM INGÁ - UPA I")
+    render_upa_page(data, "UPA JARDIM INGÁ - UPA I", meses_selecionados)
 
 elif pagina == "SAMU":
     render_samu_page()
 
 elif pagina == "HMJI":
-    render_hmji(data)
+    render_hmji(data, meses_selecionados)
 
 elif pagina == "Atenção Secundária":
     render_generic(data, "ATENÇÃO SECUNDÁRIA", [
@@ -5101,6 +5540,9 @@ elif pagina == PAGINA_ADMIN_ACESSOS:
 
 elif pagina in [PAGINA_PRODUTIVIDADE, ROTULO_PRODUTIVIDADE]:
     render_produtividade_medica_page()
+
+elif pagina == PAGINA_HEATMAP:
+    render_heatmap_page()
 
 else:
     render_metas_page(data, metas_data, metas_total_geral_map, meses_selecionados)

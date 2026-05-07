@@ -1,0 +1,30 @@
+ID,Tarefa,Arquivo impactado,Dependencia,Prioridade,Esforco pontos,Status inicial
+1,Extrair camada de dados de indicadores,PowerBI/bi_municipio_streamlit.py; PowerBI/data_indicadores.py,Nenhuma,P1,5,Nao iniciado
+2,Extrair camada de dados de metas,PowerBI/bi_municipio_streamlit.py; PowerBI/data_metas.py,Tarefa 1,P1,3,Nao iniciado
+3,Extrair camada de dados de financeiro,PowerBI/bi_municipio_streamlit.py; PowerBI/data_financeiro.py,Tarefa 1,P1,3,Nao iniciado
+4,Extrair camada de dados de RH,PowerBI/bi_municipio_streamlit.py; PowerBI/data_rh.py,Tarefa 1,P1,3,Nao iniciado
+5,Criar catalogo de indicadores e metadados,PowerBI/indicator_catalog.py,Tarefas 1 a 4,P1,3,Nao iniciado
+6,Criar modulo de filtros globais,PowerBI/bi_municipio_streamlit.py; PowerBI/filter_utils.py,Tarefa 5,P1,3,Nao iniciado
+7,Modularizar renderizacao assistencial,PowerBI/bi_municipio_streamlit.py; PowerBI/pages_assistenciais.py,Tarefas 1 e 6,P1,3,Nao iniciado
+8,Modularizar renderizacao de metas,PowerBI/bi_municipio_streamlit.py; PowerBI/pages_metas.py,Tarefas 2 e 6,P1,2,Nao iniciado
+9,Modularizar renderizacao de RH,PowerBI/bi_municipio_streamlit.py; PowerBI/pages_rh.py,Tarefas 4 e 6,P1,2,Nao iniciado
+10,Modularizar renderizacao de financeiro,PowerBI/bi_municipio_streamlit.py; PowerBI/pages_financeiro.py,Tarefas 3 e 6,P1,2,Nao iniciado
+11,Criar pagina Centro de Comando Executivo,PowerBI/bi_municipio_streamlit.py; PowerBI/pages_executivo.py,Tarefas 5 a 10,P1,8,Nao iniciado
+12,Criar monitor de filas e SLA,PowerBI/bi_municipio_streamlit.py; PowerBI/pages_filas.py; PowerBI/indicator_catalog.py,Tarefas 5 e 6,P1,5,Nao iniciado
+13,Expandir auditoria para acoes criticas,PowerBI/bi_municipio_streamlit.py; PowerBI/audit_utils.py,Tarefa 6,P1,3,Nao iniciado
+14,Criar painel de qualidade de dados,PowerBI/bi_municipio_streamlit.py; PowerBI/data_quality.py; PowerBI/pages_qualidade.py,Tarefas 1 a 6,P1,5,Nao iniciado
+15,Criar exportacao executiva padronizada,PowerBI/bi_municipio_streamlit.py; PowerBI/export_utils.py,Tarefas 11 a 14,P1,3,Nao iniciado
+16,Implementar previsao de demanda semanal,PowerBI/forecast_utils.py; PowerBI/pages_executivo.py; PowerBI/pages_assistenciais.py,Tarefas 1 a 14,P2,8,Nao iniciado
+17,Criar motor de alertas inteligentes,PowerBI/alert_utils.py; PowerBI/indicator_catalog.py; PowerBI/pages_executivo.py,Tarefas 5, 11, 12 e 16,P2,5,Nao iniciado
+18,Implementar sugestao de escala e equipe,PowerBI/workforce_planning.py; PowerBI/pages_rh.py; PowerBI/pages_executivo.py,Tarefas 4, 16 e 17,P2,5,Nao iniciado
+19,Criar simulador orcamentario,PowerBI/pages_financeiro.py; PowerBI/scenario_utils.py,Tarefas 3, 15 e 17,P2,5,Nao iniciado
+20,Criar custo por linha de cuidado,PowerBI/pages_financeiro.py; PowerBI/costing_utils.py,Tarefas 3, 5 e 19,P2,5,Nao iniciado
+21,Criar mapa de inequidades territoriais,PowerBI/pages_inequidades.py; PowerBI/territory_utils.py; PowerBI/indicator_catalog.py,Tarefas 1, 5 e disponibilidade de base territorial,P2,8,Nao iniciado
+22,Separar configuracao por tenant,PowerBI/tenant_config.py; .streamlit/secrets.toml; PowerBI/auth_utils.py,Tarefas 5, 6 e 13,P3,5,Nao iniciado
+23,Separar branding por tenant,PowerBI/style_utils.py; PowerBI/tenant_config.py; PowerBI/assets/,Tarefa 22,P3,3,Nao iniciado
+24,Separar permissoes e paginas por tenant,PowerBI/auth_utils.py; PowerBI/bi_municipio_streamlit.py; .streamlit/secrets.toml,Tarefa 22,P3,3,Nao iniciado
+25,Separar bases e logs por tenant,PowerBI/audit_utils.py; PowerBI/data_paths.py; PowerBI/bi_municipio_streamlit.py,Tarefas 22 e 24,P3,5,Nao iniciado
+26,Criar portal publico de transparencia,PowerBI/public_portal.py; PowerBI/indicator_catalog.py; PowerBI/export_utils.py,Tarefas 5, 15 e 25,P3,8,Nao iniciado
+27,Gerar relatorios regulatorios automaticos,PowerBI/regulatory_reports.py; PowerBI/export_utils.py; PowerBI/audit_utils.py,Tarefas 13, 14, 15 e 25,P3,5,Nao iniciado
+28,Criar painel de adocao do sistema,PowerBI/usage_analytics.py; PowerBI/audit_utils.py; PowerBI/pages_auditoria.py,Tarefa 13,P3,3,Nao iniciado
+29,Criar kit de implantacao por nova OS,PowerBI/templates/; PowerBI/tenant_config.py; PowerBI/indicator_catalog.py,Tarefas 22 a 25,P3,3,Nao iniciado

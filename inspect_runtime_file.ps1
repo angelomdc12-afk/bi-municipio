@@ -1,0 +1,6 @@
+$ErrorActionPreference = "Stop"
+$p = "PowerBI/bi_municipio_streamlit.py"
+Write-Host "--- constants ---"
+Select-String -Path $p -Pattern "BUILD_TAG|PAGINA_PRODUTIVIDADE|ROTULO_PRODUTIVIDADE"
+Write-Host "--- menu block ---"
+Select-String -Path $p -Pattern "menu_administrativo_produtividade_medica_upas|Produtividade Médica UPAs|Produtividade UPAs"
