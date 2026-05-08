@@ -1245,7 +1245,8 @@ def load_celk_data(_mtime=None):
     df.rename(columns=rename_map, inplace=True)
 
     # Parse DATA → datetime
-    df["DATA"] = pd.to_datetime(df["DATA"], errors="coerce", dayfirst=True)
+    # ISO format YYYY-MM-DD HH:MM:SS vindo do Excel → dayfirst=False
+    df["DATA"] = pd.to_datetime(df["DATA"], errors="coerce", dayfirst=False)
     df = df.dropna(subset=["DATA"])
 
     # Campos numéricos
@@ -1264,14 +1265,50 @@ def load_celk_data(_mtime=None):
     if "UNIDADE" in df.columns:
         df["UNIDADE"] = df["UNIDADE"].str.strip()
         df["UNIDADE_NORM"] = df["UNIDADE"].str.upper()
-        # Mapeamento para rótulos do painel
-        _unit_map = {}
-        for val in df["UNIDADE_NORM"].dropna().unique():
-            if "PRONTO ATENDIMENTO" in val and "INGA" in val:
-                _unit_map[val] = "UPA I Jardim Ingá"
-            elif "PRONTO ATENDIMENTO" in val and "UPA" in val:
-                _unit_map[val] = "UPA II Luziânia"
-        df["UNIDADE_PAINEL"] = df["UNIDADE_NORM"].map(_unit_map)
+        _CELK_UNIT_MAP = {
+            # ── UPAs ───────────────────────────────────────────────────
+            "UNIDADE DE PRONTO ATENDIMENTO DE LUZIANIA UPA":    ("UPA", "UPA II Luziânia"),
+            "UNIDADE DE PRONTO ATENDIMENTO DO JARDIM INGA UPA": ("UPA", "UPA I Jardim Ingá"),
+            # ── Atenção Básica ─────────────────────────────────────────
+            "PSF ALTO DAS CARAIBAS":                            ("Atenção Básica", "PSF Alto das Caraíbas"),
+            "PSF AMERICANOS":                                   ("Atenção Básica", "PSF Americanos"),
+            "PSF CRUZEIRO":                                     ("Atenção Básica", "PSF Cruzeiro"),
+            "PSF JARDIM DO INGA":                               ("Atenção Básica", "PSF Jardim do Ingá"),
+            "PSF JARDIM IPE":                                   ("Atenção Básica", "PSF Jardim Ipê"),
+            "PSF JARDIM MARILIA":                               ("Atenção Básica", "PSF Jardim Marília"),
+            "PSF JARDIM PLANALTO":                              ("Atenção Básica", "PSF Jardim Planalto"),
+            "PSF MANDU":                                        ("Atenção Básica", "PSF Mandu"),
+            "PSF MANIRATUBA":                                   ("Atenção Básica", "PSF Maniratuba"),
+            "PSF MINGONE I":                                    ("Atenção Básica", "PSF Mingone I"),
+            "PSF MINGONE II":                                   ("Atenção Básica", "PSF Mingone II"),
+            "PSF NORTE MARAVILHA":                              ("Atenção Básica", "PSF Norte Maravilha"),
+            "PSF PARQUE ALVORADA":                              ("Atenção Básica", "PSF Parque Alvorada"),
+            "PSF PARQUE ESTRELA DALVA IX":                      ("Atenção Básica", "PSF Parque Estrela D'Alva IX"),
+            "PSF PARQUE ESTRELA DALVA VIII":                    ("Atenção Básica", "PSF Parque Estrela D'Alva VIII"),
+            "PSF PARQUE ESTRELA DALVA X":                       ("Atenção Básica", "PSF Parque Estrela D'Alva X"),
+            "PSF PARQUE SANTA FE":                              ("Atenção Básica", "PSF Parque Santa Fé"),
+            "PSF PARQUE SOL NASCENTE":                          ("Atenção Básica", "PSF Parque Sol Nascente"),
+            "PSF RESIDENCIAL COPAIBAS":                         ("Atenção Básica", "PSF Residencial Copaíbas"),
+            "PSF SETOR LESTE":                                  ("Atenção Básica", "PSF Setor Leste"),
+            "PSF SETOR LESTE / SAO CAETANO":                    ("Atenção Básica", "PSF Setor Leste / São Caetano"),
+            "PSF TRES VENDAS":                                  ("Atenção Básica", "PSF Três Vendas"),
+            "PSF VILA ESPERANCA":                               ("Atenção Básica", "PSF Vila Esperança"),
+            "PSF VILA JURACY":                                  ("Atenção Básica", "PSF Vila Juracy"),
+            "SERVICO DE ATENDIMENTO DOMICILIAR - SAD":          ("Atenção Básica", "SAD"),
+            "UNIDADE BASICA DE SAUDE CIDADE OSFAYA":            ("Atenção Básica", "UBS Cidade Osfaya"),
+            "UNIDADE BASICA DE SAUDE DO JARDIM SAO PAULO":      ("Atenção Básica", "UBS Jardim São Paulo"),
+            "UNIDADE BASICA DE SAUDE JARDIM LUZILIA":           ("Atenção Básica", "UBS Jardim Luzília"),
+            "UNIDADE BASICA DE SAUDE PED IX I":                 ("Atenção Básica", "UBS PED IX I"),
+            "UNIDADE BASICA DE SAUDE SETOR AEROPORTO":          ("Atenção Básica", "UBS Setor Aeroporto"),
+            "UNIDADE BASICA DE SAUDE SETOR INDUSTRIAL":         ("Atenção Básica", "UBS Setor Industrial"),
+            # ── Atenção Secundária ─────────────────────────────────────
+            "CAIS I":                                           ("Atenção Secundária", "CAIS I"),
+            "MATERNO INFANTIL":                                 ("Atenção Secundária", "Materno Infantil"),
+            # ── Odontologia ────────────────────────────────────────────
+            "CENTRO ESPECIALIZADO DE ODONTOLOGIA CEO":          ("Odontologia", "CEO"),
+        }
+        df["GRUPO_PAINEL"]   = df["UNIDADE_NORM"].map({k: v[0] for k, v in _CELK_UNIT_MAP.items()})
+        df["UNIDADE_PAINEL"] = df["UNIDADE_NORM"].map({k: v[1] for k, v in _CELK_UNIT_MAP.items()})
 
     return df
 
@@ -4709,10 +4746,12 @@ def render_heatmap_page():
             index=_idx_mes_default,  # mês com mais dados por padrão
             key="hm_celk_mes_hora",
         )
-        unidade_hora = col_f2.selectbox(
-            "Unidade",
-            unidades_celk if unidades_celk else ["UPA II Luziânia", "UPA I Jardim Ingá"],
-            key="hm_celk_unidade_hora",
+        _upas_opcoes = unidades_celk if unidades_celk else ["UPA II Luziânia", "UPA I Jardim Ingá"]
+        unidades_hora = col_f2.multiselect(
+            "Unidades",
+            options=_upas_opcoes,
+            default=_upas_opcoes[:1],
+            key="hm_celk_unidades_hora",
         )
         metrica_hora = col_f3.selectbox(
             "Métrica",
@@ -4720,13 +4759,21 @@ def render_heatmap_page():
             key="hm_celk_metrica_hora",
         )
 
-        df_h = celk[celk["UNIDADE_PAINEL"] == unidade_hora].copy()
+        df_h = celk[celk["UNIDADE_PAINEL"].isin(unidades_hora)].copy()
         if mes_hora != "Todos":
             df_h = df_h[df_h["MES_LABEL"] == mes_hora]
 
-        if df_h.empty:
+        if not unidades_hora:
+            st.warning("Selecione ao menos uma unidade.")
+        elif df_h.empty:
             st.warning("Sem dados para o filtro selecionado.")
         else:
+            # DEBUG: mostrar distribuição de dias da semana
+            with st.expander("🔍 DEBUG - Distribuição de dados por dia da semana"):
+                dow_counts = df_h["DIA_SEMANA"].value_counts()
+                st.write(f"**Registros por dia**: {dict(dow_counts.sort_index())}")
+                st.write(f"**Dias únicos presentes**: {sorted(dow_counts.index.tolist())}")
+                st.write(f"**Total de registros**: {len(df_h)}")
             if metrica_hora == "Pacientes únicos":
                 raw = (
                     df_h.groupby(["HORA", "DIA_SEMANA"])["PACIENTE"]
@@ -4772,7 +4819,8 @@ def render_heatmap_page():
             pivot_hora.index.name = "Hora"
             pivot_hora.columns.name = "Dia da Semana"
 
-            titulo = f"{unidade_hora} — {metrica_hora} por Hora × Dia da Semana"
+            _lbl_upas = ", ".join(unidades_hora) if len(unidades_hora) <= 2 else f"{len(unidades_hora)} unidades"
+            titulo = f"UPAs ({_lbl_upas}) — {metrica_hora} por Hora × Dia da Semana"
             if mes_hora != "Todos":
                 titulo += f"  ({mes_hora})"
 
@@ -4792,6 +4840,109 @@ def render_heatmap_page():
             k4.metric("⌀ Média/hora", f"{media_hora:,.1f}")
 
         section_end()
+
+    # ════════════════════════════════════════════════════════════════════
+    # SEÇÃO 2 — Calendário diário (Semana × Dia da Semana)  (CELK)
+    # ════════════════════════════════════════════════════════════════════
+    # SEÇÕES 1b/1c/1d — Atenção Básica · Secundária · Odontologia
+    # ════════════════════════════════════════════════════════════════════
+    if has_celk:
+        _grupos_cfg = [
+            ("Atenção Básica",     "💊", "hm_bas",   True),
+            ("Atenção Secundária", "🏨", "hm_sec",   False),
+            ("Odontologia",        "🦷", "hm_odont", False),
+        ]
+        for _gnome, _gicon, _gpfx, _default_one in _grupos_cfg:
+            _gunids = sorted(
+                celk[celk["GRUPO_PAINEL"] == _gnome]["UNIDADE_PAINEL"].dropna().unique().tolist()
+            )
+            if not _gunids:
+                continue
+
+            section_start(
+                f"{_gicon} {_gnome} — Hora × Dia da Semana",
+                "Concentração de atendimentos por hora do dia e dia da semana "
+                "(cada célula = total ou média dos registros no período selecionado)"
+            )
+
+            _gc1, _gc2, _gc3 = st.columns([2, 3, 1])
+            _gmes = _gc1.selectbox(
+                "Mês", ["Todos"] + meses_celk,
+                index=_idx_mes_default,
+                key=f"{_gpfx}_mes",
+            )
+            _gsel = _gc2.multiselect(
+                "Unidades",
+                options=_gunids,
+                default=_gunids[:1] if _default_one else _gunids,
+                key=f"{_gpfx}_unidades",
+            )
+            _gmet = _gc3.selectbox(
+                "Métrica",
+                ["Média/dia", "Total", "Pacientes únicos"],
+                key=f"{_gpfx}_metrica",
+            )
+
+            _gdf = celk[celk["GRUPO_PAINEL"] == _gnome].copy()
+            if _gmes != "Todos":
+                _gdf = _gdf[_gdf["MES_LABEL"] == _gmes]
+            if _gsel:
+                _gdf = _gdf[_gdf["UNIDADE_PAINEL"].isin(_gsel)]
+
+            if _gdf.empty or not _gsel:
+                st.warning("Selecione ao menos uma unidade.")
+            else:
+                if _gmet == "Pacientes únicos":
+                    _graw = (
+                        _gdf.groupby(["HORA", "DIA_SEMANA"])["PACIENTE"]
+                        .nunique().reset_index()
+                        .pivot(index="HORA", columns="DIA_SEMANA", values="PACIENTE")
+                    )
+                    _gfmt = ".0f"
+                elif _gmet == "Média/dia":
+                    _gdias = _gdf.groupby("DIA_SEMANA")["DATA"].apply(lambda s: s.dt.date.nunique())
+                    _gcnt = (
+                        _gdf.groupby(["HORA", "DIA_SEMANA"])
+                        .size().reset_index(name="QTD")
+                        .pivot(index="HORA", columns="DIA_SEMANA", values="QTD")
+                    )
+                    _graw = _gcnt.div(_gdias).round(1)
+                    _gfmt = ".1f"
+                else:
+                    _graw = (
+                        _gdf.groupby(["HORA", "DIA_SEMANA"])
+                        .size().reset_index(name="QTD")
+                        .pivot(index="HORA", columns="DIA_SEMANA", values="QTD")
+                    )
+                    _gfmt = ".0f"
+
+                _graw = _graw.reindex(columns=_DOW_ORDER).reindex(sorted(_graw.index))
+                _gpivot = pd.concat([_graw, _graw.sum(axis=0).rename("TOTAL").to_frame().T])
+                _gpivot.index = [
+                    f"{int(h):02d}:00 às {int(h):02d}:59" if h != "TOTAL" else "TOTAL"
+                    for h in _gpivot.index
+                ]
+                _gpivot.index.name = "Hora"
+                _gpivot.columns.name = "Dia da Semana"
+
+                _glbl = ", ".join(_gsel) if len(_gsel) <= 2 else f"{len(_gsel)} unidades"
+                _gtit = f"{_gnome} ({_glbl}) — {_gmet} por Hora × Dia da Semana"
+                if _gmes != "Todos":
+                    _gtit += f"  ({_gmes})"
+
+                st.plotly_chart(
+                    _heatmap_fig(_gpivot, _gtit, "Dia da Semana", "Hora do Dia", height=700, fmt=_gfmt),
+                    use_container_width=True,
+                )
+
+                _gpnt = _gpivot.drop("TOTAL", errors="ignore")
+                _gk1, _gk2, _gk3, _gk4 = st.columns(4)
+                _gk1.metric("🔺 Hora de pico",    _gpnt.sum(axis=1).idxmax())
+                _gk2.metric("📅 Dia de pico",      _gpnt.sum(axis=0).idxmax())
+                _gk3.metric("🔢 Total no período", f"{int(_graw.sum().sum()):,}")
+                _gk4.metric("⌀ Média/hora",        f"{round(_graw.sum(axis=1).mean(), 1):,.1f}")
+
+            section_end()
 
     # ════════════════════════════════════════════════════════════════════
     # SEÇÃO 2 — Calendário diário (Semana × Dia da Semana)  (CELK)
