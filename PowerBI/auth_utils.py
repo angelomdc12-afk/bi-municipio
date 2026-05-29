@@ -49,8 +49,40 @@ def _resolve_auth_store_file():
     if mount_data.exists() and mount_data.is_dir():
         return (mount_data / "bi-municipio" / "auth_store.json").resolve()
 
-    # 5) Fallback local no projeto
+    # 5) Fallback para diretório de usuário (fora do repo, menos sujeito a reset por git pull)
+    try:
+        return (Path.home() / ".bi-municipio" / "auth_store.json").resolve()
+    except Exception:
+        pass
+
+    # 6) Último fallback local no projeto
     return (BASE_DIR / "logs" / "auth_store.json").resolve()
+
+
+def _fallback_auth_store_files(primary_file):
+    """Lista caminhos de espelho para redundancia de persistencia."""
+    candidates = []
+
+    mount_data = Path("/mount/data")
+    if mount_data.exists() and mount_data.is_dir():
+        candidates.append((mount_data / "bi-municipio" / "auth_store.json").resolve())
+
+    try:
+        candidates.append((Path.home() / ".bi-municipio" / "auth_store.json").resolve())
+    except Exception:
+        pass
+
+    candidates.append((BASE_DIR / "logs" / "auth_store.json").resolve())
+
+    unique = []
+    seen = set()
+    for file_path in candidates:
+        key = str(file_path)
+        if key in seen or key == str(primary_file):
+            continue
+        seen.add(key)
+        unique.append(file_path)
+    return unique
 
 
 def _default_store():
@@ -69,10 +101,18 @@ def _read_store():
     payload = _default_store()
     try:
         auth_store_file = _resolve_auth_store_file()
-        if not auth_store_file.exists() or auth_store_file.stat().st_size == 0:
+
+        read_candidates = [auth_store_file] + _fallback_auth_store_files(auth_store_file)
+        existing_candidates = [
+            p for p in read_candidates if p.exists() and p.stat().st_size > 0
+        ]
+        if not existing_candidates:
             return payload
 
-        raw = json.loads(auth_store_file.read_text(encoding="utf-8"))
+        # Recupera o store mais recente disponivel entre principal e espelhos.
+        best_store_file = max(existing_candidates, key=lambda p: p.stat().st_mtime)
+
+        raw = json.loads(best_store_file.read_text(encoding="utf-8"))
         if not isinstance(raw, Mapping):
             return payload
 
@@ -112,15 +152,23 @@ def _read_store():
 def _write_store(payload):
     try:
         auth_store_file = _resolve_auth_store_file()
-        auth_store_dir = auth_store_file.parent
-        auth_store_dir.mkdir(parents=True, exist_ok=True)
+        target_files = [auth_store_file] + _fallback_auth_store_files(auth_store_file)
+        content = json.dumps(payload, ensure_ascii=False, indent=2)
 
-        tmp_file = auth_store_file.with_suffix(auth_store_file.suffix + ".tmp")
-        tmp_file.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        tmp_file.replace(auth_store_file)
+        wrote_any = False
+        for target_file in target_files:
+            try:
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+                tmp_file = target_file.with_suffix(target_file.suffix + ".tmp")
+                tmp_file.write_text(content, encoding="utf-8")
+                tmp_file.replace(target_file)
+                wrote_any = True
+            except Exception:
+                # Mantem robustez: tenta demais destinos sem quebrar a operacao.
+                continue
+
+        if not wrote_any:
+            return False
         return True
     except Exception:
         return False
