@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Mapping
+from zoneinfo import ZoneInfo
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -15,6 +16,21 @@ def _secrets_audit_cfg():
         return audit_cfg if isinstance(audit_cfg, Mapping) else {}
     except Exception:
         return {}
+
+
+def _resolve_audit_timezone():
+    """Resolve timezone da auditoria com prioridade por configuracao."""
+    env_tz = os.getenv("AUDIT_TIMEZONE", "").strip()
+    if env_tz:
+        return env_tz
+
+    audit_cfg = _secrets_audit_cfg()
+    secret_tz = str(audit_cfg.get("timezone", "")).strip()
+    if secret_tz:
+        return secret_tz
+
+    # Padrao do projeto: horario de Brasilia.
+    return "America/Sao_Paulo"
 
 
 def _resolve_audit_file():
@@ -59,7 +75,12 @@ def _safe_text(value):
 
 
 def _timestamp_iso_local():
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    try:
+        tz_name = _resolve_audit_timezone()
+        return datetime.now(ZoneInfo(tz_name)).isoformat(timespec="seconds")
+    except Exception:
+        # Fallback defensivo caso timezone configurado seja invalido.
+        return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
 def append_audit_event(event, user="", page="", session_id="", details=""):
