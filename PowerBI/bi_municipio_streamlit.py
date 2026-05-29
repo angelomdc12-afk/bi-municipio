@@ -8624,144 +8624,200 @@ def render_admin_access_page():
     store_summary = read_auth_store_summary()
     st.caption(f"Persistencia local ativa em: {store_summary.get('store_path', 'indisponivel')}")
 
-    usuarios_ordenados = sorted(USUARIOS_APP.keys(), key=lambda x: str(x).lower())
-    table_rows = []
-    for username in usuarios_ordenados:
-        perms = PERMISSOES.get(username, [])
-        table_rows.append(
-            {
-                "usuario": username,
-                "origem": "local" if username in store_summary.get("users", {}) else "secrets",
-                "perfil": "admin" if "*" in perms else "padrao",
-                "permissoes": "*" if "*" in perms else ", ".join(perms),
-            }
+    tab_gestao, tab_auditoria = st.tabs([
+        "👤 Gestao de usuarios",
+        "🕵️ Auditoria de logins",
+    ])
+
+    with tab_gestao:
+        usuarios_ordenados = sorted(USUARIOS_APP.keys(), key=lambda x: str(x).lower())
+        table_rows = []
+        for username in usuarios_ordenados:
+            perms = PERMISSOES.get(username, [])
+            table_rows.append(
+                {
+                    "usuario": username,
+                    "origem": "local" if username in store_summary.get("users", {}) else "secrets",
+                    "perfil": "admin" if "*" in perms else "padrao",
+                    "permissoes": "*" if "*" in perms else ", ".join(perms),
+                }
+            )
+        if table_rows:
+            st.dataframe(pd.DataFrame(table_rows), width="stretch", hide_index=True)
+
+        paginas_opcoes = [
+            "UPA Luziânia",
+            "UPA Jardim Ingá",
+            "SAMU",
+            "HMJI",
+            PAGINA_MAPA_TERRITORIAL,
+            "Atenção Primária",
+            "Atenção Secundária",
+            "Saúde Mental",
+            "Gestão de Pessoas",
+            "Financeiro",
+            "Metas do Plano",
+            PAGINA_PRODUTIVIDADE,
+        ]
+
+        st.markdown("### Criar novo usuario")
+        c1, c2 = st.columns(2)
+        novo_usuario = c1.text_input("Usuario novo", key="adm_new_username")
+        senha_nova = c1.text_input("Senha inicial", type="password", key="adm_new_password")
+        senha_nova_conf = c2.text_input("Confirmar senha inicial", type="password", key="adm_new_password_confirm")
+        novo_admin_total = c2.checkbox("Conceder perfil admin (*)", key="adm_new_full_access")
+        novo_permissoes = st.multiselect(
+            "Permissoes iniciais",
+            paginas_opcoes,
+            default=[PAGINA_PRODUTIVIDADE, "SAMU"],
+            key="adm_new_permissions",
+            disabled=novo_admin_total,
         )
-    if table_rows:
-        st.dataframe(pd.DataFrame(table_rows), width="stretch", hide_index=True)
+        if st.button("Criar usuario", key="adm_create_user", width="stretch"):
+            usuario_norm = novo_usuario.strip()
+            if not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", usuario_norm):
+                st.error("Usuario invalido. Use 3-32 caracteres: letras, numeros, _, . ou -")
+            elif usuario_norm in USUARIOS_APP:
+                st.error("Este usuario ja existe.")
+            elif len(senha_nova) < 6:
+                st.error("Senha muito curta. Use ao menos 6 caracteres.")
+            elif senha_nova != senha_nova_conf:
+                st.error("A confirmacao da senha nao confere.")
+            else:
+                ok_pwd = set_user_password(usuario_norm, senha_nova)
+                perms_to_save = ["*"] if novo_admin_total else novo_permissoes
+                ok_perm = set_user_permissions(usuario_norm, perms_to_save)
+                if ok_pwd and ok_perm:
+                    append_audit_event(
+                        event="auth_user_create",
+                        user=st.session_state.get("usuario_logado", ""),
+                        page=PAGINA_ADMIN_ACESSOS,
+                        session_id=st.session_state.get("session_id", ""),
+                        details=f"Usuario criado: {usuario_norm}",
+                    )
+                    st.success("Usuario criado com persistencia local.")
+                    st.rerun()
+                else:
+                    st.error("Falha ao gravar usuario. Verifique permissao de escrita em disco.")
 
-    paginas_opcoes = [
-        "UPA Luziânia",
-        "UPA Jardim Ingá",
-        "SAMU",
-        "HMJI",
-        PAGINA_MAPA_TERRITORIAL,
-        "Atenção Primária",
-        "Atenção Secundária",
-        "Saúde Mental",
-        "Gestão de Pessoas",
-        "Financeiro",
-        "Metas do Plano",
-        PAGINA_PRODUTIVIDADE,
-    ]
-
-    st.markdown("### Criar novo usuario")
-    c1, c2 = st.columns(2)
-    novo_usuario = c1.text_input("Usuario novo", key="adm_new_username")
-    senha_nova = c1.text_input("Senha inicial", type="password", key="adm_new_password")
-    senha_nova_conf = c2.text_input("Confirmar senha inicial", type="password", key="adm_new_password_confirm")
-    novo_admin_total = c2.checkbox("Conceder perfil admin (*)", key="adm_new_full_access")
-    novo_permissoes = st.multiselect(
-        "Permissoes iniciais",
-        paginas_opcoes,
-        default=[PAGINA_PRODUTIVIDADE, "SAMU"],
-        key="adm_new_permissions",
-        disabled=novo_admin_total,
-    )
-    if st.button("Criar usuario", key="adm_create_user", width="stretch"):
-        usuario_norm = novo_usuario.strip()
-        if not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", usuario_norm):
-            st.error("Usuario invalido. Use 3-32 caracteres: letras, numeros, _, . ou -")
-        elif usuario_norm in USUARIOS_APP:
-            st.error("Este usuario ja existe.")
-        elif len(senha_nova) < 6:
-            st.error("Senha muito curta. Use ao menos 6 caracteres.")
-        elif senha_nova != senha_nova_conf:
-            st.error("A confirmacao da senha nao confere.")
-        else:
-            ok_pwd = set_user_password(usuario_norm, senha_nova)
-            perms_to_save = ["*"] if novo_admin_total else novo_permissoes
-            ok_perm = set_user_permissions(usuario_norm, perms_to_save)
-            if ok_pwd and ok_perm:
+        st.markdown("### Alterar senha")
+        alvo_senha = st.selectbox("Usuario", usuarios_ordenados, key="adm_password_user") if usuarios_ordenados else None
+        n1, n2 = st.columns(2)
+        senha_alt = n1.text_input("Nova senha", type="password", key="adm_change_password")
+        senha_alt_conf = n2.text_input("Confirmar nova senha", type="password", key="adm_change_password_confirm")
+        if st.button("Salvar nova senha", key="adm_change_password_btn", width="stretch", disabled=not alvo_senha):
+            if len(senha_alt) < 6:
+                st.error("Senha muito curta. Use ao menos 6 caracteres.")
+            elif senha_alt != senha_alt_conf:
+                st.error("A confirmacao da senha nao confere.")
+            elif set_user_password(alvo_senha, senha_alt):
                 append_audit_event(
-                    event="auth_user_create",
+                    event="auth_password_change",
                     user=st.session_state.get("usuario_logado", ""),
                     page=PAGINA_ADMIN_ACESSOS,
                     session_id=st.session_state.get("session_id", ""),
-                    details=f"Usuario criado: {usuario_norm}",
+                    details=f"Senha alterada para: {alvo_senha}",
                 )
-                st.success("Usuario criado com persistencia local.")
+                st.success("Senha atualizada e salva em disco.")
                 st.rerun()
             else:
-                st.error("Falha ao gravar usuario. Verifique permissao de escrita em disco.")
+                st.error("Falha ao salvar nova senha.")
 
-    st.markdown("### Alterar senha")
-    alvo_senha = st.selectbox("Usuario", usuarios_ordenados, key="adm_password_user") if usuarios_ordenados else None
-    n1, n2 = st.columns(2)
-    senha_alt = n1.text_input("Nova senha", type="password", key="adm_change_password")
-    senha_alt_conf = n2.text_input("Confirmar nova senha", type="password", key="adm_change_password_confirm")
-    if st.button("Salvar nova senha", key="adm_change_password_btn", width="stretch", disabled=not alvo_senha):
-        if len(senha_alt) < 6:
-            st.error("Senha muito curta. Use ao menos 6 caracteres.")
-        elif senha_alt != senha_alt_conf:
-            st.error("A confirmacao da senha nao confere.")
-        elif set_user_password(alvo_senha, senha_alt):
-            append_audit_event(
-                event="auth_password_change",
-                user=st.session_state.get("usuario_logado", ""),
-                page=PAGINA_ADMIN_ACESSOS,
-                session_id=st.session_state.get("session_id", ""),
-                details=f"Senha alterada para: {alvo_senha}",
-            )
-            st.success("Senha atualizada e salva em disco.")
-            st.rerun()
-        else:
-            st.error("Falha ao salvar nova senha.")
+        st.markdown("### Ajustar permissoes")
+        alvo_perm = st.selectbox("Usuario para permissao", usuarios_ordenados, key="adm_perm_user") if usuarios_ordenados else None
+        perms_atual = PERMISSOES.get(alvo_perm, []) if alvo_perm else []
+        admin_total = st.checkbox("Perfil admin (*)", value=("*" in perms_atual), key="adm_perm_admin")
+        selected_perms = st.multiselect(
+            "Paginas permitidas",
+            paginas_opcoes,
+            default=[] if "*" in perms_atual else [p for p in perms_atual if p in paginas_opcoes],
+            key="adm_perm_pages",
+            disabled=admin_total,
+        )
+        if st.button("Salvar permissoes", key="adm_perm_save", width="stretch", disabled=not alvo_perm):
+            perms_to_save = ["*"] if admin_total else selected_perms
+            if set_user_permissions(alvo_perm, perms_to_save):
+                append_audit_event(
+                    event="auth_permissions_change",
+                    user=st.session_state.get("usuario_logado", ""),
+                    page=PAGINA_ADMIN_ACESSOS,
+                    session_id=st.session_state.get("session_id", ""),
+                    details=f"Permissoes alteradas para: {alvo_perm}",
+                )
+                st.success("Permissoes atualizadas e salvas em disco.")
+                st.rerun()
+            else:
+                st.error("Falha ao salvar permissoes.")
 
-    st.markdown("### Ajustar permissoes")
-    alvo_perm = st.selectbox("Usuario para permissao", usuarios_ordenados, key="adm_perm_user") if usuarios_ordenados else None
-    perms_atual = PERMISSOES.get(alvo_perm, []) if alvo_perm else []
-    admin_total = st.checkbox("Perfil admin (*)", value=("*" in perms_atual), key="adm_perm_admin")
-    selected_perms = st.multiselect(
-        "Paginas permitidas",
-        paginas_opcoes,
-        default=[] if "*" in perms_atual else [p for p in perms_atual if p in paginas_opcoes],
-        key="adm_perm_pages",
-        disabled=admin_total,
-    )
-    if st.button("Salvar permissoes", key="adm_perm_save", width="stretch", disabled=not alvo_perm):
-        perms_to_save = ["*"] if admin_total else selected_perms
-        if set_user_permissions(alvo_perm, perms_to_save):
-            append_audit_event(
-                event="auth_permissions_change",
-                user=st.session_state.get("usuario_logado", ""),
-                page=PAGINA_ADMIN_ACESSOS,
-                session_id=st.session_state.get("session_id", ""),
-                details=f"Permissoes alteradas para: {alvo_perm}",
-            )
-            st.success("Permissoes atualizadas e salvas em disco.")
-            st.rerun()
-        else:
-            st.error("Falha ao salvar permissoes.")
+        st.markdown("### Desativar usuario")
+        candidatos_remocao = [u for u in usuarios_ordenados if u != "admin"]
+        remover_usuario = st.selectbox("Usuario para desativar", candidatos_remocao, key="adm_remove_user") if candidatos_remocao else None
+        confirma_remocao = st.checkbox("Confirmo a desativacao deste usuario", key="adm_remove_confirm")
+        if st.button("Desativar usuario", key="adm_remove_btn", width="stretch", disabled=(not remover_usuario)):
+            if not confirma_remocao:
+                st.error("Confirme a desativacao para continuar.")
+            elif disable_user(remover_usuario):
+                append_audit_event(
+                    event="auth_user_disable",
+                    user=st.session_state.get("usuario_logado", ""),
+                    page=PAGINA_ADMIN_ACESSOS,
+                    session_id=st.session_state.get("session_id", ""),
+                    details=f"Usuario desativado: {remover_usuario}",
+                )
+                st.success("Usuario desativado com persistencia local.")
+                st.rerun()
+            else:
+                st.error("Falha ao desativar usuario.")
 
-    st.markdown("### Desativar usuario")
-    candidatos_remocao = [u for u in usuarios_ordenados if u != "admin"]
-    remover_usuario = st.selectbox("Usuario para desativar", candidatos_remocao, key="adm_remove_user") if candidatos_remocao else None
-    confirma_remocao = st.checkbox("Confirmo a desativacao deste usuario", key="adm_remove_confirm")
-    if st.button("Desativar usuario", key="adm_remove_btn", width="stretch", disabled=(not remover_usuario)):
-        if not confirma_remocao:
-            st.error("Confirme a desativacao para continuar.")
-        elif disable_user(remover_usuario):
-            append_audit_event(
-                event="auth_user_disable",
-                user=st.session_state.get("usuario_logado", ""),
-                page=PAGINA_ADMIN_ACESSOS,
-                session_id=st.session_state.get("session_id", ""),
-                details=f"Usuario desativado: {remover_usuario}",
-            )
-            st.success("Usuario desativado com persistencia local.")
-            st.rerun()
+    with tab_auditoria:
+        raw_events = read_audit_events(limit=5000)
+        login_events = [e for e in raw_events if str(e.get("event", "")).strip().lower() == "login_success"]
+
+        if not login_events:
+            st.info("Nenhum registro de login encontrado na auditoria.")
         else:
-            st.error("Falha ao desativar usuario.")
+            audit_df = pd.DataFrame(login_events)
+            if "timestamp" in audit_df.columns:
+                ts = pd.to_datetime(audit_df["timestamp"], errors="coerce")
+                audit_df["timestamp"] = ts.dt.strftime("%d/%m/%Y %H:%M:%S").fillna(audit_df["timestamp"])
+
+            audit_df["user"] = audit_df.get("user", "").astype(str).replace("", "(sem usuario)")
+
+            total_logins = len(audit_df)
+            usuarios_distintos = int(audit_df["user"].nunique())
+            c1, c2 = st.columns(2)
+            c1.metric("Total de logins", f"{total_logins}")
+            c2.metric("Usuarios distintos", f"{usuarios_distintos}")
+
+            usuarios_opts = ["Todos"] + sorted(audit_df["user"].unique().tolist())
+            usuario_filtro = st.selectbox("Filtrar por usuario", usuarios_opts, key="adm_audit_login_user")
+
+            view_df = audit_df.copy()
+            if usuario_filtro != "Todos":
+                view_df = view_df[view_df["user"] == usuario_filtro].copy()
+
+            cols = [c for c in ["timestamp", "user", "page", "session_id", "details"] if c in view_df.columns]
+            if cols:
+                rename_map = {
+                    "timestamp": "Data/Hora",
+                    "user": "Usuario",
+                    "page": "Pagina",
+                    "session_id": "Sessao",
+                    "details": "Detalhes",
+                }
+                view_show = view_df[cols].rename(columns=rename_map)
+                st.dataframe(view_show, width="stretch", hide_index=True)
+
+                csv_data = view_show.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    "Baixar auditoria de logins (CSV)",
+                    data=csv_data,
+                    file_name="auditoria_logins.csv",
+                    mime="text/csv",
+                    key="adm_audit_login_download",
+                )
+            else:
+                st.info("Nao foi possivel montar a visualizacao da auditoria.")
 
 hero_header(pagina, source_name, meses_selecionados)
 
