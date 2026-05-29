@@ -4339,7 +4339,39 @@ def pie_latest(df, title, color_map=None, prefix="pie", unidade=None):
 
     plot(fig, prefix)
 def render_upa_page(df, unidade, meses_filtrados=None):
-    st.subheader(unidade)
+    st.markdown(
+        """
+        <style>
+        .upa-title-card {
+            background: #FFFFFF;
+            border-radius: 12px;
+            border: 1px solid #D6E4F0;
+            border-left: 6px solid #0F6CBD;
+            padding: 0.75rem 1rem;
+            margin: 0.1rem 0 0.9rem 0;
+            box-shadow: 0 2px 10px rgba(15, 23, 42, 0.06);
+        }
+
+        .upa-title-main {
+            color: #0F2A43;
+            font-size: 1.22rem;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+            margin: 0;
+        }
+
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <div class="upa-title-card">
+            <div class="upa-title-main">🚑 {unidade}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     def _mf(panel_df):
         if panel_df is None or panel_df.empty:
@@ -4494,14 +4526,14 @@ def render_upa_page(df, unidade, meses_filtrados=None):
                         line=dict(color=APP_COLORS["primary"], width=3),
                         marker=dict(color=APP_COLORS["primary"], size=7),
                         hovertemplate="<b>Média diária</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
-                   )
-               )
+                    )
+                )
 
             fig = clean_trace_names(fig)
 
             fig = apply_plotly_theme(
                 fig,
-                title="Pacientes recepcionados por mês",
+                title="Pacientes recepcionados e média diária",
                 subtitle="",
                 yaxis_title="Quantidade",
                 height=380,
@@ -4512,7 +4544,6 @@ def render_upa_page(df, unidade, meses_filtrados=None):
             fig = apply_month_axis_order(fig, recep)
 
             plot(fig, f"{unidade}_recep_media")
-
         with col2:
             line_with_optional_meta(
                 atend_med,
@@ -4676,7 +4707,38 @@ def render_upa_page(df, unidade, meses_filtrados=None):
 
 def render_hmji(df, meses_filtrados=None):
     unidade = "HMJI"
-    st.subheader(unidade)
+    st.markdown(
+        """
+        <style>
+        .hmji-title-card {
+            background: #FFFFFF;
+            border-radius: 12px;
+            border: 1px solid #D6E4F0;
+            border-left: 6px solid #0F766E;
+            padding: 0.75rem 1rem;
+            margin: 0.1rem 0 0.9rem 0;
+            box-shadow: 0 2px 10px rgba(15, 23, 42, 0.06);
+        }
+
+        .hmji-title-main {
+            color: #0F2A43;
+            font-size: 1.22rem;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+            margin: 0;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+        <div class="hmji-title-card">
+            <div class="hmji-title-main">🏥 HMJI</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     unit_df = df[df["unidade"] == unidade].copy()
     if meses_filtrados and "mes_label" in unit_df.columns:
@@ -5739,7 +5801,38 @@ def render_samu_page():
     resumo = samu["resumo"].copy()
     titulo = samu.get("titulo", "SAMU")
 
-    st.markdown("## 🚨 SAMU")
+    st.markdown(
+        """
+        <style>
+        .samu-title-card {
+            background: #FFFFFF;
+            border-radius: 12px;
+            border: 1px solid #D6E4F0;
+            border-left: 6px solid #DC2626;
+            padding: 0.75rem 1rem;
+            margin: 0.1rem 0 0.9rem 0;
+            box-shadow: 0 2px 10px rgba(15, 23, 42, 0.06);
+        }
+
+        .samu-title-main {
+            color: #0F2A43;
+            font-size: 1.22rem;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+            margin: 0;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+        <div class="samu-title-card">
+            <div class="samu-title-main">🚨 SAMU</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if diario.empty and resumo.empty:
         st.warning("A aba SAMU não foi encontrada ou está vazia na planilha.")
@@ -8363,21 +8456,7 @@ if st.session_state.get("visual_theme_user") != usuario_logado:
     st.session_state["visual_theme"] = default_theme_for_user
     st.session_state["visual_theme_user"] = usuario_logado
 
-visual_theme = st.selectbox(
-    "Visual do portal",
-    [
-        "Portal Clínico (Azul)",
-        "Pro Analytics (Escuro)",
-        "Healthcare Clean (Verde)",
-    ],
-    index=[
-        "Portal Clínico (Azul)",
-        "Pro Analytics (Escuro)",
-        "Healthcare Clean (Verde)",
-    ].index(st.session_state.get("visual_theme", "Portal Clínico (Azul)")),
-)
-
-st.session_state["visual_theme"] = visual_theme
+visual_theme = st.session_state.get("visual_theme", default_theme_for_user)
 apply_visual_theme(visual_theme)
 
 with st.expander("🎨 Temas", expanded=False):
@@ -8402,13 +8481,6 @@ with st.expander("🎨 Temas", expanded=False):
     
     if st.session_state["visual_theme"] != visual_theme:
         apply_visual_theme(st.session_state["visual_theme"])
-
-st.divider()
-
-footer_col1, footer_col2, footer_col3 = st.columns(3)
-footer_col1.caption(f"🔵 VERSAO ATIVA | {BUILD_TAG}")
-footer_col2.caption(f"📅 Build local: {globals().get('LOCAL_BUILD_STAMP', 'indisponivel')}")
-footer_col3.caption(f"👤 Usuario logado: {usuario_logado}")
 
 paginas_unidades = [
     "UPA Luziânia",
@@ -8464,8 +8536,9 @@ for page in paginas_unidades:
     if page not in paginas_disponiveis:
         continue
     active = st.session_state["pagina_selecionada"] == page
+    page_label = "UPA DE LUZIÂNIA - UPA II" if page == "UPA Luziânia" else page
     if st.sidebar.button(
-        f"{pagina_icons.get(page, '📌')}  {page}",
+        f"{pagina_icons.get(page, '📌')}  {page_label}",
         key=f"menu_unidades_{normalize_text(page)}",
         width="stretch",
         type="primary" if active else "secondary"
@@ -8872,3 +8945,9 @@ with st.expander("Base transformada"):
         st.table(data.head(300).reset_index(drop=True))
     else:
         st.caption("Tabela oculta por padrão para reduzir erros de carregamento no navegador.")
+
+st.divider()
+footer_col1, footer_col2, footer_col3 = st.columns(3)
+footer_col1.caption(f"🔵 VERSAO ATIVA | {BUILD_TAG}")
+footer_col2.caption(f"📅 Build local: {globals().get('LOCAL_BUILD_STAMP', 'indisponivel')}")
+footer_col3.caption(f"👤 Usuario logado: {usuario_logado}")
