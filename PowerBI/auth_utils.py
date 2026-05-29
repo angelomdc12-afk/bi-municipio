@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import os
 import secrets
 from collections.abc import Mapping
 from pathlib import Path
@@ -11,8 +12,45 @@ PBKDF2_PREFIX = "pbkdf2_sha256"
 PBKDF2_ITERATIONS = 390000
 
 BASE_DIR = Path(__file__).resolve().parent
-AUTH_STORE_DIR = BASE_DIR / "logs"
-AUTH_STORE_FILE = AUTH_STORE_DIR / "auth_store.json"
+
+
+def _secrets_auth_cfg():
+    try:
+        auth_cfg = st.secrets.get("auth", {})
+        return auth_cfg if isinstance(auth_cfg, Mapping) else {}
+    except Exception:
+        return {}
+
+
+def _resolve_auth_store_file():
+    """Resolve caminho do arquivo de persistencia com prioridade por configuracao."""
+    # 1) Variavel de ambiente para arquivo completo
+    env_file = os.getenv("AUTH_STORE_FILE", "").strip()
+    if env_file:
+        return Path(env_file).expanduser().resolve()
+
+    # 2) Variavel de ambiente para diretorio
+    env_dir = os.getenv("AUTH_STORE_DIR", "").strip()
+    if env_dir:
+        return (Path(env_dir).expanduser().resolve() / "auth_store.json")
+
+    # 3) Secrets (streamlit) para arquivo completo ou diretorio
+    auth_cfg = _secrets_auth_cfg()
+    secret_file = str(auth_cfg.get("store_file", "")).strip()
+    if secret_file:
+        return Path(secret_file).expanduser().resolve()
+
+    secret_dir = str(auth_cfg.get("store_dir", "")).strip()
+    if secret_dir:
+        return (Path(secret_dir).expanduser().resolve() / "auth_store.json")
+
+    # 4) Em ambiente cloud, prioriza volume de dados se existir
+    mount_data = Path("/mount/data")
+    if mount_data.exists() and mount_data.is_dir():
+        return (mount_data / "bi-municipio" / "auth_store.json").resolve()
+
+    # 5) Fallback local no projeto
+    return (BASE_DIR / "logs" / "auth_store.json").resolve()
 
 
 def _default_store():
@@ -30,10 +68,11 @@ def _normalize_username(username):
 def _read_store():
     payload = _default_store()
     try:
-        if not AUTH_STORE_FILE.exists() or AUTH_STORE_FILE.stat().st_size == 0:
+        auth_store_file = _resolve_auth_store_file()
+        if not auth_store_file.exists() or auth_store_file.stat().st_size == 0:
             return payload
 
-        raw = json.loads(AUTH_STORE_FILE.read_text(encoding="utf-8"))
+        raw = json.loads(auth_store_file.read_text(encoding="utf-8"))
         if not isinstance(raw, Mapping):
             return payload
 
@@ -72,11 +111,16 @@ def _read_store():
 
 def _write_store(payload):
     try:
-        AUTH_STORE_DIR.mkdir(parents=True, exist_ok=True)
-        AUTH_STORE_FILE.write_text(
+        auth_store_file = _resolve_auth_store_file()
+        auth_store_dir = auth_store_file.parent
+        auth_store_dir.mkdir(parents=True, exist_ok=True)
+
+        tmp_file = auth_store_file.with_suffix(auth_store_file.suffix + ".tmp")
+        tmp_file.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        tmp_file.replace(auth_store_file)
         return True
     except Exception:
         return False
@@ -134,12 +178,14 @@ def disable_user(username):
 
 
 def read_auth_store_summary():
+    auth_store_file = _resolve_auth_store_file()
     store = _read_store()
     return {
         "users": dict(store.get("users", {})),
         "permissions": dict(store.get("permissions", {})),
         "disabled_users": list(store.get("disabled_users", [])),
-        "store_path": str(AUTH_STORE_FILE),
+        "store_path": str(auth_store_file),
+        "store_exists": auth_store_file.exists(),
     }
 
 
