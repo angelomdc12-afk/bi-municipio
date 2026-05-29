@@ -12,6 +12,29 @@ PBKDF2_PREFIX = "pbkdf2_sha256"
 PBKDF2_ITERATIONS = 390000
 
 BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent
+
+
+def _mount_auth_store_file():
+    mount_data = Path("/mount/data")
+    if mount_data.exists() and mount_data.is_dir():
+        return (mount_data / "bi-municipio" / "auth_store.json").resolve()
+    return None
+
+
+def _is_repo_managed_path(file_path):
+    try:
+        return file_path.resolve().is_relative_to(REPO_ROOT.resolve())
+    except Exception:
+        return False
+
+
+def _prefer_persistent_store_path(candidate_file):
+    # Em cloud com volume, evita gravar em caminhos do repo (volateis em deploy).
+    mount_file = _mount_auth_store_file()
+    if mount_file and _is_repo_managed_path(candidate_file):
+        return mount_file
+    return candidate_file
 
 
 def _secrets_auth_cfg():
@@ -27,27 +50,27 @@ def _resolve_auth_store_file():
     # 1) Variavel de ambiente para arquivo completo
     env_file = os.getenv("AUTH_STORE_FILE", "").strip()
     if env_file:
-        return Path(env_file).expanduser().resolve()
+        return _prefer_persistent_store_path(Path(env_file).expanduser().resolve())
 
     # 2) Variavel de ambiente para diretorio
     env_dir = os.getenv("AUTH_STORE_DIR", "").strip()
     if env_dir:
-        return (Path(env_dir).expanduser().resolve() / "auth_store.json")
+        return _prefer_persistent_store_path((Path(env_dir).expanduser().resolve() / "auth_store.json"))
 
     # 3) Secrets (streamlit) para arquivo completo ou diretorio
     auth_cfg = _secrets_auth_cfg()
     secret_file = str(auth_cfg.get("store_file", "")).strip()
     if secret_file:
-        return Path(secret_file).expanduser().resolve()
+        return _prefer_persistent_store_path(Path(secret_file).expanduser().resolve())
 
     secret_dir = str(auth_cfg.get("store_dir", "")).strip()
     if secret_dir:
-        return (Path(secret_dir).expanduser().resolve() / "auth_store.json")
+        return _prefer_persistent_store_path((Path(secret_dir).expanduser().resolve() / "auth_store.json"))
 
     # 4) Em ambiente cloud, prioriza volume de dados se existir
-    mount_data = Path("/mount/data")
-    if mount_data.exists() and mount_data.is_dir():
-        return (mount_data / "bi-municipio" / "auth_store.json").resolve()
+    mount_file = _mount_auth_store_file()
+    if mount_file:
+        return mount_file
 
     # 5) Fallback para diretório de usuário (fora do repo, menos sujeito a reset por git pull)
     try:
@@ -63,9 +86,9 @@ def _fallback_auth_store_files(primary_file):
     """Lista caminhos de espelho para redundancia de persistencia."""
     candidates = []
 
-    mount_data = Path("/mount/data")
-    if mount_data.exists() and mount_data.is_dir():
-        candidates.append((mount_data / "bi-municipio" / "auth_store.json").resolve())
+    mount_file = _mount_auth_store_file()
+    if mount_file:
+        candidates.append(mount_file)
 
     try:
         candidates.append((Path.home() / ".bi-municipio" / "auth_store.json").resolve())
@@ -85,6 +108,28 @@ def _fallback_auth_store_files(primary_file):
     return unique
 
 
+def _store_file_rank(file_path, primary_file):
+    """Menor valor = fonte mais confiavel para leitura."""
+    mount_file = _mount_auth_store_file()
+    try:
+        resolved_file = file_path.resolve()
+    except Exception:
+        resolved_file = file_path
+
+    try:
+        resolved_primary = primary_file.resolve()
+    except Exception:
+        resolved_primary = primary_file
+
+    if mount_file and resolved_file == mount_file:
+        return 0
+    if resolved_file == resolved_primary and not _is_repo_managed_path(resolved_file):
+        return 1
+    if not _is_repo_managed_path(resolved_file):
+        return 2
+    return 4
+
+
 def _default_store():
     return {
         "users": {},
@@ -102,15 +147,26 @@ def _read_store():
     try:
         auth_store_file = _resolve_auth_store_file()
 
-        read_candidates = [auth_store_file] + _fallback_auth_store_files(auth_store_file)
+        read_candidates = []
+        seen = set()
+        for candidate in [auth_store_file] + _fallback_auth_store_files(auth_store_file):
+            key = str(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            read_candidates.append(candidate)
+
         existing_candidates = [
             p for p in read_candidates if p.exists() and p.stat().st_size > 0
         ]
         if not existing_candidates:
             return payload
 
-        # Recupera o store mais recente disponivel entre principal e espelhos.
-        best_store_file = max(existing_candidates, key=lambda p: p.stat().st_mtime)
+        # Prioriza fonte persistente (ex.: /mount/data); usa mtime como desempate.
+        best_store_file = min(
+            existing_candidates,
+            key=lambda p: (_store_file_rank(p, auth_store_file), -p.stat().st_mtime),
+        )
 
         raw = json.loads(best_store_file.read_text(encoding="utf-8"))
         if not isinstance(raw, Mapping):
