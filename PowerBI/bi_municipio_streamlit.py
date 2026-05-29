@@ -3,15 +3,19 @@ from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
 import base64
+import difflib
 import html
 import os
 import re
 
 import openpyxl
+import folium
+from folium.plugins import HeatMap, MarkerCluster
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 from auth_utils import (
     disable_user,
     load_auth_users_from_secrets,
@@ -32,7 +36,15 @@ PAGINA_PRODUTIVIDADE = "Produtividade UPAs"
 ROTULO_PRODUTIVIDADE = "Produtividade Médica UPAs"
 PAGINA_ADMIN_ACESSOS = "Administracao de Acessos"
 PAGINA_HEATMAP = "Mapa de Calor"
-PAGINAS_LIBERADAS_GLOBAL = {"SAMU", PAGINA_PRODUTIVIDADE, ROTULO_PRODUTIVIDADE, "Produtividade Upas", PAGINA_HEATMAP}
+PAGINA_MAPA_TERRITORIAL = "Mapa Territorial"
+PAGINAS_LIBERADAS_GLOBAL = {
+    "SAMU",
+    PAGINA_PRODUTIVIDADE,
+    ROTULO_PRODUTIVIDADE,
+    "Produtividade Upas",
+    PAGINA_HEATMAP,
+    PAGINA_MAPA_TERRITORIAL,
+}
 
 
 def get_local_build_stamp():
@@ -56,6 +68,7 @@ PERMISSOES_PADRAO = {
         "UPA Jardim Ingá",
         "SAMU",
         "HMJI",
+        PAGINA_MAPA_TERRITORIAL,
         "Atenção Secundária",
         "Saúde Mental",
         "Atenção Primária",
@@ -646,7 +659,7 @@ def _chart_exec_status(fig, indicator_hint=""):
     }
 
 
-def plot(fig, prefix="grafico"):
+def plot(fig, prefix="grafico", show_status_chip=True):
     global _plot_counter
     _plot_counter += 1
 
@@ -654,30 +667,59 @@ def plot(fig, prefix="grafico"):
     if title:
         indicator_hint = f"{title} {subtitle}".strip()
         status = _chart_exec_status(fig, indicator_hint=indicator_hint)
+        no_status_titles = {
+            "Pacientes recepcionados por mês",
+            "Atendimentos médicos vs meta",
+            "Produção diária do SAMU",
+        }
+        show_status_chip = show_status_chip and (title not in no_status_titles)
         status_label = html.escape(status["label"])
         status_detail = f" {html.escape(status['detail'])}" if status.get("detail") else ""
-        subtitle_text = subtitle if subtitle else "Leitura executiva do indicador selecionado"
-        subtitle_safe = html.escape(subtitle_text)
+        subtitle_text = subtitle if subtitle else ""
+        subtitle_html = ""
+        if subtitle_text:
+            subtitle_safe = html.escape(subtitle_text)
+            subtitle_html = f'<div class="chart-exec-subtitle">{subtitle_safe}</div>'
         title_safe = html.escape(title)
+        chip_html = ""
+        if show_status_chip:
+            chip_palette = {
+                "success": ("#16A34A", "#FFFFFF"),
+                "warning": ("#D97706", "#FFFFFF"),
+                "danger": ("#DC2626", "#FFFFFF"),
+                "neutral": ("#64748B", "#FFFFFF"),
+                "info": ("#0F6CBD", "#FFFFFF"),
+            }
+            chip_bg, chip_fg = chip_palette.get(status.get("tone"), ("#0F6CBD", "#FFFFFF"))
+            if title in {"Consultas Médicas", "Nível Superior (Exceto Médico)"}:
+                detail_raw = str(status.get("detail") or "").strip()
+                is_negative = detail_raw.startswith("-") or detail_raw.startswith("−")
+                chip_bg, chip_fg = ("#DC2626", "#FFFFFF") if is_negative else ("#16A34A", "#FFFFFF")
+            chip_html = (
+                f'<div class="chart-exec-chip chart-exec-chip-{status["tone"]}" '
+                f'style="display:inline-flex;align-items:center;justify-content:center;white-space:nowrap;'
+                f'font-size:11px;font-weight:800;color:{chip_fg};background:{chip_bg};'
+                f'border:1px solid {chip_bg};border-radius:999px;padding:6px 11px;line-height:1;">'
+                f'{status_label}{status_detail}</div>'
+            )
 
-        st.markdown(
-            f"""
-            <div class="chart-exec-header">
-                <div class="chart-exec-row">
-                    <div>
-                        <div class="chart-exec-title">{title_safe}</div>
-                        <div class="chart-exec-subtitle">{subtitle_safe}</div>
-                    </div>
-                    <div class="chart-exec-chip chart-exec-chip-{status['tone']}">{status_label}{status_detail}</div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        header_html = (
+            '<div class="chart-exec-header">'
+            '<div class="chart-exec-row">'
+            '<div>'
+            f'<div class="chart-exec-title" style="font-size:18px;font-weight:800;color:#0B1220;letter-spacing:-0.3px;line-height:1.22;"><strong style="font-weight:800">{title_safe}</strong></div>'
+            f'{subtitle_html}'
+            '</div>'
+            f'{chip_html}'
+            '</div>'
+            '</div>'
         )
+
+        st.markdown(header_html, unsafe_allow_html=True)
 
         current_margin = getattr(getattr(fig.layout, "margin", None), "t", None)
         new_margin_top = max(28, int(current_margin) - 44) if current_margin is not None else 34
-        fig.update_layout(title=None, margin=dict(t=new_margin_top))
+        fig.update_layout(title_text="", margin=dict(t=new_margin_top))
 
     st.plotly_chart(fig, width="stretch", key=f"{prefix}_{_plot_counter}")
 
@@ -1183,6 +1225,286 @@ def load_financeiro_data(file_bytes=None, _mtime=None):
     return df
 
 
+@st.cache_data(show_spinner=False)
+def load_mapa_territorial_data(file_bytes=None, _mtime=None):
+    """Carrega GEO_UNIDADES e COLABORADORES para o mapa territorial."""
+    if file_bytes is None:
+        path = local_excel_path()
+        if not path:
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), ["Arquivo Excel local não encontrado."]
+        xls = pd.ExcelFile(path)
+    else:
+        xls = pd.ExcelFile(BytesIO(file_bytes))
+
+    erros = []
+    if "GEO_UNIDADES" not in xls.sheet_names:
+        erros.append("A aba GEO_UNIDADES não foi encontrada na planilha.")
+    if "COLABORADORES" not in xls.sheet_names:
+        erros.append("A aba COLABORADORES não foi encontrada na planilha.")
+    if erros:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), erros
+
+    geo_raw = pd.read_excel(xls, sheet_name="GEO_UNIDADES")
+    colab_raw = pd.read_excel(xls, sheet_name="COLABORADORES")
+
+    def _pick_col(df_cols, aliases):
+        cols_norm = {normalize_text(c): c for c in df_cols}
+        for alias in aliases:
+            if alias in cols_norm:
+                return cols_norm[alias]
+        for col in df_cols:
+            col_norm = normalize_text(col) or ""
+            if any(alias in col_norm for alias in aliases):
+                return col
+        return None
+
+    geo_unid_col = _pick_col(geo_raw.columns, {"UNIDADE"})
+    geo_lat_col = _pick_col(geo_raw.columns, {"LATITUDE", "LAT"})
+    geo_lon_col = _pick_col(geo_raw.columns, {"LONGITUDE", "LONG", "LON"})
+    geo_tipo_col = _pick_col(geo_raw.columns, {"TIPO"})
+
+    if not geo_unid_col or not geo_lat_col or not geo_lon_col:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), [
+            "A aba GEO_UNIDADES precisa das colunas: unidade, latitude e longitude.",
+        ]
+
+    geo = geo_raw.copy()
+    geo = geo.rename(columns={
+        geo_unid_col: "unidade",
+        geo_lat_col: "latitude",
+        geo_lon_col: "longitude",
+        geo_tipo_col: "tipo" if geo_tipo_col else "tipo",
+    })
+    if "tipo" not in geo.columns:
+        geo["tipo"] = "Não informado"
+
+    geo["unidade"] = geo["unidade"].astype(str).str.strip()
+    geo["unidade_norm"] = geo["unidade"].map(normalize_text)
+    geo["tipo"] = geo["tipo"].fillna("Não informado").astype(str).str.strip()
+
+    geo["latitude"] = (
+        geo["latitude"].astype(str).str.replace(",", ".", regex=False)
+    )
+    geo["longitude"] = (
+        geo["longitude"].astype(str).str.replace(",", ".", regex=False)
+    )
+    geo["latitude"] = pd.to_numeric(geo["latitude"], errors="coerce")
+    geo["longitude"] = pd.to_numeric(geo["longitude"], errors="coerce")
+    geo = geo.dropna(subset=["unidade_norm", "latitude", "longitude"]).copy()
+
+    # Corrige casos evidentes de lat/lon invertidos em bases externas.
+    swapped_mask = geo["latitude"].abs().gt(33) & geo["longitude"].abs().lt(33)
+    if swapped_mask.any():
+        geo.loc[swapped_mask, ["latitude", "longitude"]] = geo.loc[
+            swapped_mask, ["longitude", "latitude"]
+        ].to_numpy()
+
+    # Correcoes pontuais validadas no Google Maps para unidades com coordenada digitada incorretamente.
+    geo_overrides = {
+        "UBS JARDIM INGA - UNIDADE BASICA DE SAUD": (-16.1428497, -47.9505777),
+        "UBSF - TRES VENDAS": (-16.3136192, -48.0148513),
+    }
+    override_mask = geo["unidade_norm"].isin(geo_overrides)
+    if override_mask.any():
+        geo.loc[override_mask, "latitude"] = geo.loc[override_mask, "unidade_norm"].map(
+            lambda key: geo_overrides.get(key, (None, None))[0]
+        )
+        geo.loc[override_mask, "longitude"] = geo.loc[override_mask, "unidade_norm"].map(
+            lambda key: geo_overrides.get(key, (None, None))[1]
+        )
+
+    geo = geo.drop_duplicates(subset=["unidade_norm"], keep="first")
+
+    colab_nome_col = _pick_col(colab_raw.columns, {"COLABORADOR", "NOME"})
+    colab_cpf_col = _pick_col(colab_raw.columns, {"CPF"})
+    colab_cargo_col = _pick_col(colab_raw.columns, {"CARGO"})
+    colab_regime_col = _pick_col(colab_raw.columns, {"REGIME DE TRABALHO", "REGIME"})
+    colab_crm_col = _pick_col(colab_raw.columns, {"CRM"})
+    colab_adm_col = _pick_col(colab_raw.columns, {"ADM", "ADMISSAO", "ADMISSÃO", "DATA ADMISSAO", "DATA ADMISSAO"})
+    colab_situacao_col = _pick_col(colab_raw.columns, {"SITUACAO", "SITUAÇÃO", "STATUS"})
+
+    def _slug_token(value):
+        txt = normalize_text(value) or ""
+        txt = re.sub(r"[^A-Z0-9]+", "_", txt).strip("_").lower()
+        return txt or "mes"
+
+    def _fmt_adm(value):
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return ""
+        try:
+            dt_val = pd.to_datetime(value, errors="coerce")
+            if pd.notna(dt_val):
+                return dt_val.strftime("%d/%m/%Y")
+        except Exception:
+            pass
+        return str(value).strip()
+
+    def _to_money(value):
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return pd.NA
+        parsed = normalize_value(value)
+        num = pd.to_numeric(pd.Series([parsed]), errors="coerce").iloc[0]
+        return float(num) if pd.notna(num) else pd.NA
+
+    proventos_meta = []
+    used_tokens = set()
+    for col in colab_raw.columns:
+        col_norm = normalize_text(col) or ""
+        if not col_norm.startswith("PROVENTOS"):
+            continue
+        mes_label = re.sub(r"(?i)^\s*proventos\s*", "", str(col)).strip()
+        if not mes_label:
+            parts = col_norm.split(" ", 1)
+            mes_label = parts[1] if len(parts) > 1 else "Mes"
+        token = _slug_token(mes_label)
+        if token in used_tokens:
+            token = f"{token}_{len(used_tokens) + 1}"
+        used_tokens.add(token)
+        proventos_meta.append({
+            "col": col,
+            "mes_label": mes_label,
+            "field": f"proventos_{token}",
+        })
+    colab_unid_cols = [
+        c for c in [
+            _pick_col(colab_raw.columns, {"UNIDADE"}),
+            _pick_col(colab_raw.columns, {"UNIDADE 2", "UNIDADE2"}),
+            _pick_col(colab_raw.columns, {"UNIDADE 3", "UNIDADE3"}),
+        ]
+        if c is not None
+    ]
+
+    if not colab_unid_cols:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), [
+            "A aba COLABORADORES precisa ter ao menos a coluna unidade.",
+        ]
+
+    rows = []
+    for idx, row in colab_raw.iterrows():
+        nome = str(row[colab_nome_col]).strip() if colab_nome_col and pd.notna(row[colab_nome_col]) else f"COLAB_{idx + 1}"
+        cpf_raw = str(row[colab_cpf_col]).strip() if colab_cpf_col and pd.notna(row[colab_cpf_col]) else ""
+        cpf_digits = re.sub(r"\D", "", cpf_raw)
+        colab_id = cpf_digits if cpf_digits else f"{normalize_text(nome) or 'SEM_NOME'}_{idx}"
+        adm_txt = _fmt_adm(row[colab_adm_col]) if colab_adm_col and colab_adm_col in row.index else ""
+        situacao_txt = str(row[colab_situacao_col]).strip() if colab_situacao_col and pd.notna(row[colab_situacao_col]) else ""
+
+        proventos_row = {}
+        for meta in proventos_meta:
+            raw_val = row[meta["col"]] if meta["col"] in row.index else None
+            proventos_row[meta["field"]] = _to_money(raw_val)
+
+        unidades = []
+        for uc in colab_unid_cols:
+            val = row[uc]
+            if pd.isna(val):
+                continue
+            u_txt = str(val).strip()
+            u_norm = normalize_text(u_txt)
+            if u_norm:
+                unidades.append((u_txt, u_norm))
+
+        unidades = list(dict.fromkeys(unidades))
+        for u_txt, u_norm in unidades:
+            item = {
+                "colaborador_id": colab_id,
+                "colaborador": nome,
+                "cpf": cpf_raw,
+                "cargo": str(row[colab_cargo_col]).strip() if colab_cargo_col and pd.notna(row[colab_cargo_col]) else "",
+                "regime_trabalho": str(row[colab_regime_col]).strip() if colab_regime_col and pd.notna(row[colab_regime_col]) else "",
+                "crm": str(row[colab_crm_col]).strip() if colab_crm_col and pd.notna(row[colab_crm_col]) else "",
+                "adm": adm_txt,
+                "situacao": situacao_txt,
+                "unidade": u_txt,
+                "unidade_norm": u_norm,
+            }
+            item.update(proventos_row)
+            rows.append(item)
+
+    aloc = pd.DataFrame(rows)
+    if aloc.empty:
+        geo["qtd_colaboradores"] = 0
+        geo["qtd_medicos"] = 0
+        return geo, pd.DataFrame(columns=["unidade", "qtd_colaboradores", "qtd_medicos"]), pd.DataFrame(), []
+
+    aloc = aloc.drop_duplicates(subset=["colaborador_id", "unidade_norm"]).copy()
+    aloc["is_medico"] = aloc["crm"].astype(str).str.strip().ne("")
+
+    resumo_unidade = (
+        aloc.groupby("unidade_norm", as_index=False)
+        .agg(
+            qtd_colaboradores=("colaborador_id", "nunique"),
+            qtd_medicos=("is_medico", "sum"),
+        )
+    )
+
+    geo = geo.merge(resumo_unidade, on="unidade_norm", how="left")
+    geo["qtd_colaboradores"] = geo["qtd_colaboradores"].fillna(0).astype(int)
+    geo["qtd_medicos"] = geo["qtd_medicos"].fillna(0).astype(int)
+
+    ranking = geo[["unidade", "tipo", "qtd_colaboradores", "qtd_medicos"]].copy()
+    ranking = ranking.sort_values(["qtd_colaboradores", "qtd_medicos"], ascending=False).reset_index(drop=True)
+
+    proventos_fields = [meta["field"] for meta in proventos_meta]
+    detail_cols = [
+        "unidade",
+        "unidade_norm",
+        "colaborador",
+        "cpf",
+        "cargo",
+        "regime_trabalho",
+        "crm",
+        "adm",
+        "situacao",
+        "colaborador_id",
+    ] + proventos_fields
+
+    aloc_detail = (
+        aloc[detail_cols]
+        .sort_values(["unidade", "colaborador"], ascending=[True, True])
+        .reset_index(drop=True)
+    )
+
+    return geo, ranking, aloc_detail, []
+
+
+@st.cache_data(show_spinner=False)
+def load_colaboradores_sheet(file_bytes=None, _mtime=None):
+    """Carrega a aba COLABORADORES completa do arquivo fonte ativo (local/upload)."""
+    try:
+        if file_bytes is None:
+            path = local_excel_path()
+            if not path:
+                return pd.DataFrame()
+            xls = pd.ExcelFile(path)
+            if "COLABORADORES" not in xls.sheet_names:
+                return pd.DataFrame()
+            df = pd.read_excel(xls, sheet_name="COLABORADORES")
+        else:
+            xls = pd.ExcelFile(BytesIO(file_bytes))
+            if "COLABORADORES" not in xls.sheet_names:
+                return pd.DataFrame()
+            df = pd.read_excel(xls, sheet_name="COLABORADORES")
+    except Exception:
+        return pd.DataFrame()
+
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    # Mantem nomes originais para exibicao, removendo apenas espacos excedentes.
+    df = df.rename(columns={c: str(c).strip() for c in df.columns})
+
+    for col in df.columns:
+        col_norm = normalize_text(col) or ""
+        if any(token in col_norm for token in ["PROVENTOS", "DESCONTOS", "LIQUIDO"]):
+            df[col] = pd.to_numeric(df[col].map(normalize_value), errors="coerce")
+        if "ADM" in col_norm:
+            parsed = pd.to_datetime(df[col], errors="coerce")
+            if parsed.notna().any():
+                df[col] = parsed.dt.strftime("%d/%m/%Y")
+
+    return df
+
+
 
 # ---------------------------------------------------------------------------
 # LOADER CELK — dados transacionais brutos (linha por atendimento)
@@ -1202,6 +1524,88 @@ def _celk_paths():
 def _celk_mtime():
     paths = _celk_paths()
     return sum(int(os.path.getmtime(p) * 1000) for p in paths) if paths else 0
+
+
+def _celk_alias_files():
+    base_dir = Path(__file__).resolve().parent
+    data_raw_dir = base_dir / "data_raw"
+    return [
+        data_raw_dir / "mapeamento_unidades_celk.xlsx",
+        data_raw_dir / "mapeamento_unidades_celk.csv",
+        data_raw_dir / "relacao_unidades_celk.xlsx",
+        data_raw_dir / "relacao_unidades_celk.csv",
+        base_dir / "mapeamento_unidades_celk.xlsx",
+        base_dir / "mapeamento_unidades_celk.csv",
+        base_dir / "relacao_unidades_celk.xlsx",
+        base_dir / "relacao_unidades_celk.csv",
+    ]
+
+
+@st.cache_data(show_spinner=False)
+def load_celk_unit_aliases(_mtime=None):
+    """
+    Carrega relação A->B para unidades CELK (de-para).
+    A = nome da unidade na planilha CELK, B = nome canônico que deve prevalecer no app.
+    """
+    alias_map = {}
+
+    def _consume_df(df_alias):
+        if df_alias is None or df_alias.empty or df_alias.shape[1] < 2:
+            return
+        for _, row in df_alias.iloc[:, :2].iterrows():
+            unidade_a = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
+            unidade_b = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ""
+            if not unidade_a or not unidade_b:
+                continue
+            key = normalize_text(unidade_a)
+            if not key or key in {"UNIDADE", "COLUNA A", "A"}:
+                continue
+            alias_map[key] = unidade_b
+
+    for alias_file in _celk_alias_files():
+        if not alias_file.exists():
+            continue
+        try:
+            if alias_file.suffix.lower() == ".csv":
+                _consume_df(pd.read_csv(alias_file, dtype=str, header=None))
+            else:
+                excel_file = pd.ExcelFile(alias_file)
+                for sheet_name in excel_file.sheet_names:
+                    _consume_df(pd.read_excel(alias_file, sheet_name=sheet_name, dtype=str, header=None))
+        except Exception:
+            pass
+
+    mapping_sheet_tokens = ("MAPE", "RELAC", "DE PARA", "DE-PARA", "CORRESP")
+    for celk_file in _celk_paths():
+        try:
+            excel_file = pd.ExcelFile(celk_file)
+            for sheet_name in excel_file.sheet_names:
+                sheet_norm = normalize_text(sheet_name) or ""
+                if not any(token in sheet_norm for token in mapping_sheet_tokens):
+                    continue
+                _consume_df(pd.read_excel(celk_file, sheet_name=sheet_name, dtype=str, header=None))
+        except Exception:
+            pass
+
+    return alias_map
+
+
+def _infer_celk_group(unidade):
+    txt = normalize_text(unidade) or ""
+    if "UPA" in txt:
+        return "UPA"
+    if any(token in txt for token in ["PSF", "UBS", "UBSF", "SAD"]):
+        return "Atenção Básica"
+    if any(token in txt for token in ["CEO", "ODONTO"]):
+        return "Odontologia"
+    if any(token in txt for token in ["CAIS", "MATERNO", "CAPS"]):
+        return "Atenção Secundária"
+    return None
+
+
+def _is_upa_unit(unidade):
+    txt = normalize_text(unidade) or ""
+    return "UPA" in txt
 
 
 @st.cache_data(show_spinner=False)
@@ -1264,7 +1668,9 @@ def load_celk_data(_mtime=None):
     # Normaliza UNIDADE
     if "UNIDADE" in df.columns:
         df["UNIDADE"] = df["UNIDADE"].str.strip()
-        df["UNIDADE_NORM"] = df["UNIDADE"].str.upper()
+        df["UNIDADE_CELK_ORIGINAL"] = df["UNIDADE"]
+        unidade_celk_norm = df["UNIDADE"].map(normalize_text)
+
         _CELK_UNIT_MAP = {
             # ── UPAs ───────────────────────────────────────────────────
             "UNIDADE DE PRONTO ATENDIMENTO DE LUZIANIA UPA":    ("UPA", "UPA II Luziânia"),
@@ -1307,8 +1713,22 @@ def load_celk_data(_mtime=None):
             # ── Odontologia ────────────────────────────────────────────
             "CENTRO ESPECIALIZADO DE ODONTOLOGIA CEO":          ("Odontologia", "CEO"),
         }
-        df["GRUPO_PAINEL"]   = df["UNIDADE_NORM"].map({k: v[0] for k, v in _CELK_UNIT_MAP.items()})
-        df["UNIDADE_PAINEL"] = df["UNIDADE_NORM"].map({k: v[1] for k, v in _CELK_UNIT_MAP.items()})
+        unit_map_norm = {normalize_text(k): v for k, v in _CELK_UNIT_MAP.items()}
+        fallback_group_map = {k: v[0] for k, v in unit_map_norm.items()}
+        fallback_name_map = {k: v[1] for k, v in unit_map_norm.items()}
+
+        alias_map = load_celk_unit_aliases(_mtime=_mtime)
+        unidade_canonica = unidade_celk_norm.map(alias_map)
+        unidade_canonica = unidade_canonica.fillna(unidade_celk_norm.map(fallback_name_map)).fillna(df["UNIDADE"])
+        unidade_canonica = unidade_canonica.astype(str).str.strip()
+
+        grupo_painel = unidade_celk_norm.map(fallback_group_map)
+        grupo_painel = grupo_painel.fillna(unidade_canonica.map(_infer_celk_group))
+
+        df["UNIDADE"] = unidade_canonica
+        df["UNIDADE_NORM"] = df["UNIDADE"].map(normalize_text)
+        df["GRUPO_PAINEL"] = grupo_painel
+        df["UNIDADE_PAINEL"] = unidade_canonica
 
     return df
 
@@ -1633,10 +2053,7 @@ def render_financeiro_page(fin_df, meses_filtrados):
 
     kpis = financeiro_kpis(work)
 
-    section_start(
-        "Resumo financeiro",
-        "Visão executiva da aba Financeiro com gastos consolidados no período filtrado"
-    )
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         top_kpi_card("Gasto total", format_currency_br(kpis["total"]), icon="💰", subtitle="▲ total no período", accent_color="#22C55E", subtitle_color="#16A34A")
@@ -1657,8 +2074,8 @@ def render_financeiro_page(fin_df, meses_filtrados):
     mensal = mensal[mensal["valor_num"] > 0]
 
     section_start(
-        "Evolução mensal dos gastos",
-        "Tendência financeira consolidada por mês"
+        "",
+        ""
     )
     fig = go.Figure()
     fig.add_trace(
@@ -1684,7 +2101,7 @@ def render_financeiro_page(fin_df, meses_filtrados):
     fig = apply_plotly_theme(
         fig,
         title="Gasto total por mês",
-        subtitle="Leitura mensal consolidada da aba Financeiro",
+        subtitle="",
         yaxis_title="Valor (R$)",
         height=390,
         legend=True,
@@ -1703,8 +2120,8 @@ def render_financeiro_page(fin_df, meses_filtrados):
     top_fornecedores = fornecedores.head(10).copy()
 
     section_start(
-        "Ranking de fornecedores",
-        "Maiores gastos acumulados no período filtrado"
+        "",
+        ""
     )
     fig_top = go.Figure()
     fig_top.add_trace(
@@ -1720,7 +2137,7 @@ def render_financeiro_page(fin_df, meses_filtrados):
     fig_top = apply_plotly_theme(
         fig_top,
         title="Top 10 fornecedores por gasto",
-        subtitle="Ranking consolidado do período selecionado",
+        subtitle="",
         yaxis_title="",
         height=430,
         legend=False
@@ -1736,7 +2153,7 @@ def render_financeiro_page(fin_df, meses_filtrados):
     )
 
     section_start(
-        "Detalhamento analítico",
+        "<span style='font-size:1.52rem;font-weight:900;line-height:1.15;'>Detalhamento analítico</span>",
         "Tabela executiva com consolidação por fornecedor"
     )
     tabela = fornecedores.copy()
@@ -2064,7 +2481,8 @@ def line_time_chart(
     title,
     main_series=None,
     prefix="time_line",
-    unidade=None
+    unidade=None,
+    subtitle=None,
 ):
     work = df.dropna(subset=["valor_num"]).copy()
     if work.empty:
@@ -2151,7 +2569,7 @@ def line_time_chart(
     fig = apply_plotly_theme(
         fig,
         title=title,
-        subtitle=chart_subtitle(work, unidade),
+        subtitle=chart_subtitle(work, unidade) if subtitle is None else subtitle,
         yaxis_title="Tempo (HH:MM:SS)",
         height=360,
         legend=True,
@@ -2491,7 +2909,7 @@ def render_metas_page(data, metas_df, total_geral_map=None, meses_filtrados=None
         saldo_subtitle_color = "#2563EB"
         saldo_accent_color = "#3B82F6"
 
-    section_start("Resumo geral das metas", "Comparativo consolidado entre executado e meta da aba Metas do Plano")
+    section_start("", "")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         top_kpi_card("Executado total", format_compact_number(total_executado), icon="📌", subtitle=subtitle_executado_total, accent_color="#22C55E", subtitle_color="#16A34A")
@@ -2501,13 +2919,6 @@ def render_metas_page(data, metas_df, total_geral_map=None, meses_filtrados=None
         top_kpi_card("% atingido", format_pct_br(total_pct), icon="📈", subtitle=pct_subtitle, accent_color=pct_accent_color, subtitle_color=pct_subtitle_color)
     with c4:
         top_kpi_card("Saldo percentual", format_pct_br(total_saldo_pct), icon="⚖️", subtitle=saldo_subtitle, accent_color=saldo_accent_color, subtitle_color=saldo_subtitle_color)
-    section_end()
-
-    section_start("Painel por meta", "Cards executivos com executado, meta, percentual atingido e saldo")
-    cols = st.columns(2)
-    for idx, row in enumerate(resumo.itertuples(index=False)):
-        with cols[idx % 2]:
-            render_meta_card(row.categoria, row.executado, row.meta, row.atingido_pct, row.saldo_pct)
     section_end()
 
     serie_grafico = resumo.sort_values("atingido_pct", ascending=False).copy()
@@ -2532,8 +2943,8 @@ def render_metas_page(data, metas_df, total_geral_map=None, meses_filtrados=None
     )
     fig = apply_plotly_theme(
         fig,
-        title="Executado x Meta por categoria",
-        subtitle="Comparativo consolidado conforme a base carregada",
+        title="",
+        subtitle="",
         yaxis_title="Quantidade",
         height=430,
         legend=True,
@@ -2541,7 +2952,62 @@ def render_metas_page(data, metas_df, total_geral_map=None, meses_filtrados=None
         tick_angle=-25
     )
     fig.update_layout(barmode="group")
-    plot(fig, "metas_comparativo")
+    st.markdown(
+        """
+        <style>
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 0.7rem;
+            padding: 0.15rem 0 0.65rem 0;
+            overflow-x: auto;
+        }
+
+        .stTabs [data-baseweb="tab"] {
+            background: linear-gradient(180deg, #F5FAFF 0%, #EDF5FC 100%);
+            border: 1px solid #BDD5EA;
+            border-radius: 14px;
+            padding: 0.48rem 1.05rem;
+            min-height: 48px;
+            box-shadow: 0 2px 8px rgba(15, 108, 189, 0.08);
+            transition: all 0.18s ease;
+        }
+
+        .stTabs [data-baseweb="tab"]:hover {
+            background: linear-gradient(180deg, #F0F7FF 0%, #E6F0FA 100%);
+            border-color: #8CB8DF;
+        }
+
+        .stTabs [data-baseweb="tab"] p {
+            font-size: 0.98rem;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+            color: #0B3B69;
+        }
+
+        .stTabs [aria-selected="true"] {
+            background: linear-gradient(180deg, #FFFFFF 0%, #F4F9FE 100%);
+            border: 2px solid #0F6CBD;
+            box-shadow: inset 0 -3px 0 #EF4444, 0 8px 18px rgba(15, 108, 189, 0.14);
+            transform: translateY(-1px);
+        }
+
+        .stTabs [aria-selected="true"] p {
+            color: #083055;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    tab_painel_meta, tab_metas_comparativo = st.tabs([
+        "🎯 Painel por meta",
+        "📊 Executado x Meta por categoria"
+    ])
+    with tab_painel_meta:
+        cols = st.columns(2)
+        for idx, row in enumerate(resumo.itertuples(index=False)):
+            with cols[idx % 2]:
+                render_meta_card(row.categoria, row.executado, row.meta, row.atingido_pct, row.saldo_pct)
+    with tab_metas_comparativo:
+        plot(fig, "metas_comparativo")
 
     tabela = resumo.copy()
     tabela["Executado"] = tabela["executado"].apply(format_compact_number)
@@ -2632,31 +3098,451 @@ def top_kpi_card(
     )
 
     st.markdown(html, unsafe_allow_html=True)
-def section_start(title, subtitle=""):
+
+
+def command_center_kpi_card(title, value, subtitle="", accent="#22C55E", icon="◎"):
+    value = clean_card_value(value)
+    html_kpi = (
+        '<div style="'
+        'background: linear-gradient(145deg, #0F172A 0%, #132A46 100%);'
+        'border: 1px solid rgba(148,163,184,0.25);'
+        'border-radius: 18px;'
+        'padding: 14px 15px 12px 15px;'
+        'box-shadow: 0 14px 28px rgba(2, 6, 23, 0.30);'
+        'position: relative;'
+        'overflow: hidden;'
+        'min-height: 124px;'
+        '">'
+            '<div style="position:absolute; top:0; left:0; right:0; height:3px; background:' + accent + '; opacity:0.95;"></div>'
+            '<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;">'
+                '<div style="font-size:11px; font-weight:700; letter-spacing:1px; text-transform:uppercase; color:#9FB6D3;">' + title + '</div>'
+                '<div style="width:32px; height:32px; border-radius:10px; background:rgba(255,255,255,0.08); color:#E2E8F0; display:flex; align-items:center; justify-content:center; font-size:16px;">' + icon + '</div>'
+            '</div>'
+            '<div style="font-size:30px; font-weight:800; line-height:1; color:#F8FAFC; letter-spacing:-0.5px;">' + value + '</div>'
+            '<div style="margin-top:8px; font-size:12px; color:#B8CAE0; line-height:1.35;">' + subtitle + '</div>'
+        '</div>'
+    )
+    st.markdown(html_kpi, unsafe_allow_html=True)
+
+def render_elegant_table(
+    df,
+    column_config=None,
+    hide_index=True,
+    use_container_width=True,
+    row_height=42,
+    key=None,
+    status_columns=None,
+    emphasis_columns=None,
+    bar_columns=None,
+    heatmap_columns=None,
+    progress_columns=None,
+    critical_condition=None,
+):
+    if df is None or df.empty:
+        st.info("Sem dados para exibir.")
+        return
+
+    display_df = df.copy()
+    status_columns = status_columns or []
+    emphasis_columns = emphasis_columns or []
+    bar_columns = bar_columns or []
+    heatmap_columns = heatmap_columns or []
+    progress_columns = progress_columns or []
+
+    numeric_cache = {}
+    for col in display_df.columns:
+        numeric_cache[col] = pd.to_numeric(display_df[col], errors="coerce")
+
+    def _to_float(value):
+        try:
+            return float(value)
+        except Exception:
+            return None
+
+    def _format_value(col_name, value):
+        if pd.isna(value):
+            return "-"
+        num_val = _to_float(value)
+        if num_val is None:
+            return str(value)
+
+        col_norm = normalize_text(col_name)
+        if "%" in col_name or "PARTICIPACAO" in col_norm:
+            return f"{num_val:.1f}%"
+        if "INDICE" in col_norm:
+            return f"{num_val:.2f}"
+        if "MEDIA" in col_norm or "IDEAIS" in col_norm or "GAP" in col_norm:
+            return f"{num_val:.1f}"
+        if abs(num_val) >= 1000:
+            return format_int(int(round(num_val)))
+        if float(num_val).is_integer():
+            return str(int(num_val))
+        return f"{num_val:.1f}"
+
+    def _status_badge_class(value):
+        raw = normalize_text(str(value or ""))
+        if raw.startswith("DEFICIT") or raw.startswith("CRITICA"):
+            return "badge-critical"
+        if raw.startswith("EQUILIBR"):
+            return "badge-ok"
+        if raw.startswith("EXCESSO"):
+            return "badge-warn"
+        if raw.startswith("MODERADA") or raw.startswith("MEDIA"):
+            return "badge-medium"
+        if raw.startswith("BAIXA"):
+            return "badge-low"
+        return "badge-info"
+
+    def _is_critical_row(row):
+        if critical_condition is None:
+            return False
+        try:
+            return bool(critical_condition(row))
+        except Exception:
+            return False
+
+    def _norm_value(col_name, value):
+        series = numeric_cache.get(col_name)
+        if series is None:
+            return 0.0
+        valid = series.dropna()
+        val = _to_float(value)
+        if val is None or valid.empty:
+            return 0.0
+        vmin = float(valid.min())
+        vmax = float(valid.max())
+        if abs(vmax - vmin) < 1e-9:
+            return 0.5
+        return min(1.0, max(0.0, (val - vmin) / (vmax - vmin)))
+
+    table_dom_id = (key or f"territorial_table_{abs(hash(tuple(display_df.columns)))}")
+    table_dom_id = re.sub(r"[^A-Za-z0-9_-]", "_", str(table_dom_id))
+
     st.markdown(
         f"""
-        <div class="section-card">
+        <style>
+        .analytics-table-shell#{table_dom_id} {{
+            border: 1px solid #DFE7F3;
+            border-radius: 18px;
+            background: linear-gradient(180deg, #FFFFFF 0%, #F8FBFF 100%);
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+            overflow: hidden;
+            margin-top: 0.35rem;
+            margin-bottom: 0.35rem;
+        }}
+
+        .analytics-table-shell#{table_dom_id} .analytics-table-scroll {{
+            max-height: 560px;
+            overflow: auto;
+        }}
+
+        .analytics-table-shell#{table_dom_id} table {{
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            table-layout: auto;
+        }}
+
+        .analytics-table-shell#{table_dom_id} th {{
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            background: linear-gradient(180deg, #F4F8FF 0%, #EAF1FC 100%);
+            color: #0F1E33;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            font-size: 11px;
+            font-weight: 800;
+            text-align: left;
+            padding: 14px 16px;
+            border-bottom: 1px solid #D7E2F1;
+            white-space: nowrap;
+        }}
+
+        .analytics-table-shell#{table_dom_id} td {{
+            padding: 14px 16px;
+            border-bottom: 1px solid #ECF2FA;
+            color: #0F172A;
+            font-size: 13px;
+            line-height: 1.35;
+            vertical-align: middle;
+            transition: background 180ms ease, transform 180ms ease;
+        }}
+
+        .analytics-table-shell#{table_dom_id} tbody tr {{
+            animation: tblFadeIn 220ms ease both;
+        }}
+
+        .analytics-table-shell#{table_dom_id} tbody tr:nth-child(even) td {{
+            background: #FBFDFF;
+        }}
+
+        .analytics-table-shell#{table_dom_id} tbody tr:hover td {{
+            background: #EEF4FF;
+        }}
+
+        .analytics-table-shell#{table_dom_id} tbody tr.row-critical td {{
+            background: #FFF7ED;
+        }}
+
+        .analytics-table-shell#{table_dom_id} tbody tr.row-critical td:first-child {{
+            box-shadow: inset 4px 0 0 #DC2626;
+        }}
+
+        .analytics-table-shell#{table_dom_id} .td-emphasis {{
+            font-weight: 800;
+            color: #0B1F33;
+        }}
+
+        .analytics-table-shell#{table_dom_id} .td-muted {{
+            color: #64748B;
+            font-weight: 500;
+        }}
+
+        .analytics-table-shell#{table_dom_id} .cell-number-strong {{
+            font-weight: 800;
+            font-size: 13.4px;
+            color: #0F172A;
+        }}
+
+        .analytics-table-shell#{table_dom_id} .badge {{
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 999px;
+            padding: 5px 11px;
+            font-size: 11.5px;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+            border: 1px solid transparent;
+            box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+            white-space: nowrap;
+        }}
+
+        .analytics-table-shell#{table_dom_id} .badge-critical {{
+            background: #FEE2E2;
+            color: #991B1B;
+            border-color: #FCA5A5;
+            box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.14), 0 0 14px rgba(220, 38, 38, 0.16);
+        }}
+        .analytics-table-shell#{table_dom_id} .badge-ok {{
+            background: #DCFCE7;
+            color: #166534;
+            border-color: #86EFAC;
+        }}
+        .analytics-table-shell#{table_dom_id} .badge-warn {{
+            background: #FEF3C7;
+            color: #92400E;
+            border-color: #FCD34D;
+        }}
+        .analytics-table-shell#{table_dom_id} .badge-medium {{
+            background: #FFEDD5;
+            color: #9A3412;
+            border-color: #FDBA74;
+        }}
+        .analytics-table-shell#{table_dom_id} .badge-low {{
+            background: #E2E8F0;
+            color: #334155;
+            border-color: #CBD5E1;
+        }}
+        .analytics-table-shell#{table_dom_id} .badge-info {{
+            background: #DBEAFE;
+            color: #1D4ED8;
+            border-color: #93C5FD;
+        }}
+
+        .analytics-table-shell#{table_dom_id} .metric-wrap {{
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-width: 120px;
+        }}
+
+        .analytics-table-shell#{table_dom_id} .metric-value {{
+            font-weight: 800;
+            color: #0F172A;
+            font-size: 12.5px;
+        }}
+
+        .analytics-table-shell#{table_dom_id} .metric-track {{
+            height: 8px;
+            background: #E5ECF6;
+            border-radius: 999px;
+            overflow: hidden;
+        }}
+
+        .analytics-table-shell#{table_dom_id} .metric-fill {{
+            height: 100%;
+            border-radius: 999px;
+            transition: width 240ms ease;
+            background: linear-gradient(90deg, #0EA5E9 0%, #2563EB 100%);
+        }}
+
+        .analytics-table-shell#{table_dom_id} .metric-fill.neg {{
+            background: linear-gradient(90deg, #F97316 0%, #DC2626 100%);
+        }}
+
+        .analytics-table-shell#{table_dom_id} .progress-wrap {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 130px;
+        }}
+
+        .analytics-table-shell#{table_dom_id} .progress-track {{
+            flex: 1;
+            height: 8px;
+            background: #E2E8F0;
+            border-radius: 999px;
+            overflow: hidden;
+        }}
+
+        .analytics-table-shell#{table_dom_id} .progress-fill {{
+            height: 100%;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #22C55E 0%, #0EA5E9 100%);
+        }}
+
+        .analytics-table-shell#{table_dom_id} .progress-fill.warn {{
+            background: linear-gradient(90deg, #F59E0B 0%, #F97316 100%);
+        }}
+
+        .analytics-table-shell#{table_dom_id} .progress-fill.critical {{
+            background: linear-gradient(90deg, #F97316 0%, #DC2626 100%);
+        }}
+
+        .analytics-table-shell#{table_dom_id} .table-footer {{
+            padding: 10px 14px;
+            color: #64748B;
+            font-size: 11px;
+            border-top: 1px solid #E6EDF7;
+            background: #FAFCFF;
+        }}
+
+        @keyframes tblFadeIn {{
+            from {{ opacity: 0; transform: translateY(2px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    headers_html = "".join([f"<th>{html.escape(str(col))}</th>" for col in display_df.columns])
+    rows_html = []
+
+    for _, row in display_df.iterrows():
+        row_class = "row-critical" if _is_critical_row(row) else ""
+        cell_parts = []
+
+        for col in display_df.columns:
+            raw_value = row[col]
+            formatted = _format_value(col, raw_value)
+            safe_text = html.escape(str(formatted))
+            cell_classes = []
+            cell_style = ""
+            content = safe_text
+
+            is_secondary = col not in emphasis_columns and col not in status_columns and col not in bar_columns and col not in progress_columns
+
+            if col in emphasis_columns:
+                cell_classes.append("td-emphasis")
+            elif is_secondary:
+                cell_classes.append("td-muted")
+
+            if col in status_columns:
+                badge_class = _status_badge_class(raw_value)
+                content = f'<span class="badge {badge_class}">{html.escape(str(raw_value))}</span>'
+
+            elif col in bar_columns:
+                num_val = _to_float(raw_value)
+                if num_val is not None:
+                    valid = numeric_cache[col].dropna()
+                    vmax = max(abs(float(valid.min() if not valid.empty else 0.0)), abs(float(valid.max() if not valid.empty else 0.0)), 1.0)
+                    pct = min(100.0, max(0.0, (abs(num_val) / vmax) * 100.0))
+                    fill_class = "metric-fill neg" if num_val < 0 else "metric-fill"
+                    content = (
+                        '<div class="metric-wrap">'
+                        f'<div class="metric-value">{safe_text}</div>'
+                        '<div class="metric-track">'
+                        f'<div class="{fill_class}" style="width:{pct:.1f}%;"></div>'
+                        '</div>'
+                        '</div>'
+                    )
+                else:
+                    content = '<span class="td-muted">-</span>'
+
+            elif col in progress_columns:
+                num_val = _to_float(raw_value)
+                if num_val is not None:
+                    normalized = min(1.0, max(0.0, num_val))
+                    if num_val < 0.85:
+                        p_class = "progress-fill critical"
+                    elif num_val > 1.15:
+                        p_class = "progress-fill warn"
+                    else:
+                        p_class = "progress-fill"
+                    content = (
+                        '<div class="progress-wrap">'
+                        '<div class="progress-track">'
+                        f'<div class="{p_class}" style="width:{normalized * 100.0:.1f}%;"></div>'
+                        '</div>'
+                        f'<span class="metric-value">{safe_text}</span>'
+                        '</div>'
+                    )
+
+            elif col in heatmap_columns:
+                intensity = _norm_value(col, raw_value)
+                blue_alpha = 0.08 + (0.22 * intensity)
+                red_alpha = 0.05 + (0.18 * intensity)
+                if "GAP" in normalize_text(col) and _to_float(raw_value) is not None and _to_float(raw_value) >= 0:
+                    cell_style = f"background: linear-gradient(90deg, rgba(239,68,68,{red_alpha:.3f}) 0%, rgba(255,255,255,0) 82%);"
+                else:
+                    cell_style = f"background: linear-gradient(90deg, rgba(14,165,233,{blue_alpha:.3f}) 0%, rgba(255,255,255,0) 82%);"
+                cell_classes.append("cell-number-strong")
+
+            elif _to_float(raw_value) is not None and col in ["Atendimentos", "Gap colaboradores", "Indice adequacao"]:
+                cell_classes.append("cell-number-strong")
+
+            cls_str = " ".join(cell_classes).strip()
+            class_attr = f' class="{cls_str}"' if cls_str else ""
+            style_attr = f' style="{cell_style}"' if cell_style else ""
+            cell_parts.append(f"<td{class_attr}{style_attr}>{content}</td>")
+
+        rows_html.append(f"<tr class=\"{row_class}\">{''.join(cell_parts)}</tr>")
+
+    table_html = (
+        f'<div id="{table_dom_id}" class="analytics-table-shell">'
+        '<div class="analytics-table-scroll">'
+        '<table>'
+        f'<thead><tr>{headers_html}</tr></thead>'
+        f'<tbody>{"".join(rows_html)}</tbody>'
+        '</table>'
+        '</div>'
+        f'<div class="table-footer">{len(display_df)} registros | leitura executiva territorial</div>'
+        '</div>'
+    )
+
+    st.markdown(table_html, unsafe_allow_html=True)
+
+
+def section_start(title, subtitle="", theme=None):
+    theme_class = f" section-card--{theme}" if theme else ""
+    st.markdown(
+        f"""
+        <div class="section-card{theme_class}">
             <div class="section-title">{title}</div>
             <div class="section-subtitle">{subtitle}</div>
         """,
         unsafe_allow_html=True
     )
 
+
 def section_end():
     st.markdown("</div>", unsafe_allow_html=True)
 
+
 def hero_header(page_title, source_name, meses_selecionados):
-    page_title_norm = normalize_text(str(page_title))
-    page_title_display = "Produtividade Médica UPAs" if "produtividade" in page_title_norm and "upa" in page_title_norm else page_title
-    if not meses_selecionados:
-        periodo = "Todos os meses"
-    elif len(meses_selecionados) <= 4:
-        periodo = " | ".join(meses_selecionados)
-    else:
-        periodo = " | ".join(meses_selecionados[:4]) + "..."
-
-    data_ref = dt.datetime.now().strftime("%d/%m/%Y %H:%M")
-
     st.markdown(
         """
         <style>
@@ -2682,23 +3568,6 @@ def hero_header(page_title, source_name, meses_selecionados):
             color: rgba(255,255,255,0.82);
             font-size: 0.98rem;
             margin-bottom: 1rem;
-        }
-
-        .hero-chip-row {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-        }
-
-        .hero-chip {
-            background: rgba(255,255,255,0.12);
-            color: #FFFFFF;
-            border: 1px solid rgba(255,255,255,0.05);
-            border-radius: 999px;
-            padding: 0.42rem 0.78rem;
-            font-size: 0.82rem;
-            font-weight: 600;
-            backdrop-filter: blur(6px);
         }
 
         .logo-slot {
@@ -2737,11 +3606,6 @@ def hero_header(page_title, source_name, meses_selecionados):
                 <div class="hero-title" style="width: 100%; text-align: center;">Painel de Gestão Patris</div>
                 <div class="hero-subtitle" style="width: 100%; text-align: center;">
                    Gestão estratégica da produção assistencial e desempenho operacional
-                </div>
-                <div class="hero-chip-row" style="justify-content: center; display: flex;">
-                    <div class="hero-chip">Página: {page_title_display}</div>
-                    <div class="hero-chip">Período: {periodo}</div>
-                    <div class="hero-chip">Atualizado em: {data_ref}</div>
                 </div>
             </div>
             """,
@@ -3081,7 +3945,7 @@ def apply_plotly_theme(
 ):
     full_title = ""
     if title:
-        full_title = f"<b>{title}</b>"
+        full_title = f"<span style='font-weight:800'>{title}</span>"
         if subtitle:
             full_title += f"<br><span style='font-size:12px; color:#64748B; font-weight:400'>{subtitle}</span>"
 
@@ -3102,11 +3966,11 @@ def apply_plotly_theme(
         ),
         title_font=dict(
             color=APP_COLORS["title"],
-            size=18
+            size=20
         ),
         colorway=DEFAULT_CHART_COLORS,
         height=height,
-        margin=dict(l=30, r=18, t=78, b=72),
+        margin=dict(l=30, r=18, t=84, b=72),
         hoverlabel=dict(
             bgcolor="#FFFFFF",
             bordercolor="#CBD5E1",
@@ -3152,14 +4016,15 @@ def apply_plotly_theme(
         fig.update_layout(
             showlegend=True,
             legend=dict(
-                title="",
+                title_text="",
                 orientation=legend_orientation,
                 yanchor="bottom",
                 y=1.02,
                 xanchor="left",
                 x=0,
                 font=dict(size=11, color="#64748B"),
-                traceorder="normal"
+                traceorder="normal",
+                itemsizing="constant"
             )
         )
     else:
@@ -3228,7 +4093,8 @@ def line_with_optional_meta(
     main_series=None,
     unit_suffix="",
     prefix="line",
-    unidade=None
+    unidade=None,
+    subtitle=None,
 ):
     work = df.dropna(subset=["valor_num"]).copy()
     if work.empty:
@@ -3316,7 +4182,7 @@ def line_with_optional_meta(
     fig = apply_plotly_theme(
         fig,
         title=title,
-        subtitle=chart_subtitle(work, unidade),
+        subtitle=chart_subtitle(work, unidade) if subtitle is None else subtitle,
         yaxis_title=unit_suffix,
         height=350,
         legend=True,
@@ -3335,12 +4201,20 @@ def grouped_bar(
     barmode="group",
     unit_suffix="",
     prefix="bar",
-    unidade=None
+    unidade=None,
+    subtitle=None,
+    show_status_chip=True,
 ):
     work = df.dropna(subset=["valor_num"]).copy()
     if work.empty:
         st.info("Sem dados para este gráfico.")
         return
+
+    if "serie" in work.columns:
+        serie_txt = work["serie"].astype(str).str.strip()
+        invalid_names = serie_txt.str.lower().isin(["", "nan", "none", "undefined"])
+        serie_txt = serie_txt.mask(invalid_names, "Sem classificação")
+        work["serie"] = serie_txt
 
     fig = px.bar(
         work,
@@ -3359,7 +4233,7 @@ def grouped_bar(
     fig = apply_plotly_theme(
         fig,
         title=title,
-        subtitle=chart_subtitle(work, unidade),
+        subtitle=chart_subtitle(work, unidade) if subtitle is None else subtitle,
         yaxis_title=unit_suffix,
         height=380,
         legend=True,
@@ -3368,7 +4242,7 @@ def grouped_bar(
 
     fig = apply_month_axis_order(fig, work)
 
-    plot(fig, prefix)
+    plot(fig, prefix, show_status_chip=show_status_chip)
 
 
 def stacked_bar(
@@ -3488,7 +4362,7 @@ def render_upa_page(df, unidade, meses_filtrados=None):
     origem = _mf(filter_panel(df, unidade, "ATENDIMENTOS DE  PACIENTES"))
     obitos = _mf(filter_panel(df, unidade, "ÓBITOS"))
 
-    section_start("Resumo executivo", "Visão consolidada dos principais indicadores da unidade")
+    section_start("", "")
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
@@ -3543,198 +4417,262 @@ def render_upa_page(df, unidade, meses_filtrados=None):
         )
     section_end()
 
-    section_start("Produção assistencial", "Indicadores centrais de entrada e produção médica")
-    col1, col2 = st.columns(2)
+    st.markdown(
+        """
+        <style>
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 0.6rem;
+            padding: 0.2rem 0.1rem 0.5rem 0.1rem;
+        }
 
-    with col1:
-        fig = go.Figure()
+        .stTabs [data-baseweb="tab"] {
+            background: linear-gradient(180deg, rgba(15,108,189,0.12) 0%, rgba(15,108,189,0.05) 100%);
+            border: 1px solid rgba(15,108,189,0.35);
+            border-radius: 12px;
+            padding: 0.5rem 0.95rem;
+            min-height: 44px;
+            box-shadow: 0 2px 8px rgba(15, 108, 189, 0.08);
+        }
 
-        main = recep[recep["serie_norm"] == "PACIENTES RECEPCIONADOS"]
-        avg = recep[recep["serie_norm"].isin(["MÉDIA DIÁRIA", "MEDIA DIÁRIA", "MEDIA DIARIA"])]
+        .stTabs [data-baseweb="tab"] p {
+            font-size: 1rem;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+            color: #0b3b69;
+        }
 
-        if not main.empty:
-            fig.add_trace(
-                go.Bar(
-                    x=main["mes_label"],
-                    y=main["valor_num"],
-                    name="Pacientes recepcionados",
-                    marker_color=APP_COLORS["primary_soft"],
-                    hovertemplate="<b>Pacientes recepcionados</b><br>Mês: %{x}<br>Total: %{y:,.0f}<extra></extra>"
+        .stTabs [aria-selected="true"] {
+            background: linear-gradient(180deg, rgba(15,108,189,0.24) 0%, rgba(15,108,189,0.12) 100%);
+            border: 2px solid #0F6CBD;
+            box-shadow: 0 0 0 1px rgba(15,108,189,0.15), 0 8px 18px rgba(15, 108, 189, 0.18);
+            transform: translateY(-1px);
+        }
+
+        .stTabs [aria-selected="true"] p {
+            color: #083055;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    tab_prod, tab_risco, tab_perm, tab_exames = st.tabs([
+        "Produção assistencial",
+        "Risco e tempo assistencial",
+        "Permanência, apoio e desfechos",
+        "Exames internos e faixa etária",
+    ])
+
+    with tab_prod:
+        section_start("Produção assistencial", "")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            fig = go.Figure()
+
+            main = recep[recep["serie_norm"] == "PACIENTES RECEPCIONADOS"]
+            avg = recep[recep["serie_norm"].isin(["MÉDIA DIÁRIA", "MEDIA DIÁRIA", "MEDIA DIARIA"])]
+
+            if not main.empty:
+                fig.add_trace(
+                    go.Bar(
+                        x=main["mes_label"],
+                        y=main["valor_num"],
+                        name="Pacientes recepcionados",
+                        marker_color=APP_COLORS["primary_soft"],
+                        hovertemplate="<b>Pacientes recepcionados</b><br>Mês: %{x}<br>Total: %{y:,.0f}<extra></extra>"
+                )
             )
-        )
 
-        if not avg.empty:
-            fig.add_trace(
-                go.Scatter(
-                    x=avg["mes_label"],
-                    y=avg["valor_num"],
-                    mode="lines+markers",
-                    name="Média diária",
-                    line=dict(color=APP_COLORS["primary"], width=3),
-                    marker=dict(color=APP_COLORS["primary"], size=7),
-                    hovertemplate="<b>Média diária</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
+            if not avg.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=avg["mes_label"],
+                        y=avg["valor_num"],
+                        mode="lines+markers",
+                        name="Média diária",
+                        line=dict(color=APP_COLORS["primary"], width=3),
+                        marker=dict(color=APP_COLORS["primary"], size=7),
+                        hovertemplate="<b>Média diária</b><br>Mês: %{x}<br>Valor: %{y:,.1f}<extra></extra>"
+                   )
                )
-           )
 
-        fig = clean_trace_names(fig)
+            fig = clean_trace_names(fig)
 
-        fig = apply_plotly_theme(
-            fig,
-            title="Pacientes recepcionados por mês",
-            subtitle=chart_subtitle(recep, unidade) + " • total mensal + média diária",
-            yaxis_title="Quantidade",
-            height=380,
-            legend=True,
-            legend_orientation="h"
-        )
+            fig = apply_plotly_theme(
+                fig,
+                title="Pacientes recepcionados por mês",
+                subtitle="",
+                yaxis_title="Quantidade",
+                height=380,
+                legend=True,
+                legend_orientation="h"
+            )
 
-        fig = apply_month_axis_order(fig, recep)
+            fig = apply_month_axis_order(fig, recep)
 
-        plot(fig, f"{unidade}_recep_media")
-    
-    with col2:
-        line_with_optional_meta(
-            atend_med,
-            "Atendimentos médicos vs meta",
-            main_series="ATENDIMENTOS MÉDICOS",
-            prefix=f"{unidade}_atend_med",
-            unidade=unidade
-        )
-    section_end()
+            plot(fig, f"{unidade}_recep_media")
 
-    section_start("Risco e tempo assistencial", "Leitura da pressão assistencial, classificação e desempenho de atendimento")
-    risco_plot = risco[
-        ~risco["serie_norm"].str.contains("TOTAL", na=False)
-    ].copy()
+        with col2:
+            line_with_optional_meta(
+                atend_med,
+                "Atendimentos médicos vs meta",
+                main_series="ATENDIMENTOS MÉDICOS",
+                prefix=f"{unidade}_atend_med",
+                unidade=unidade,
+                subtitle=""
+            )
+        section_end()
 
-    # remove meses totalmente zerados
-    if not risco_plot.empty:
-        risco_plot_original = risco_plot.copy()
-        soma_mes_risco = risco_plot.groupby("mes_label")["valor_num"].sum(min_count=1)
-        meses_validos_risco = soma_mes_risco[soma_mes_risco.fillna(0) > 0].index.tolist()
-        risco_plot = risco_plot[risco_plot["mes_label"].isin(meses_validos_risco)].copy()
-        if risco_plot.empty:
-            risco_plot = risco_plot_original
+    with tab_risco:
+        section_start("Risco e tempo assistencial", "")
+        risco_plot = risco[
+            ~risco["serie_norm"].str.contains("TOTAL", na=False)
+        ].copy()
 
-    grouped_bar(
-        risco_plot,
-        "Atendimentos por classificação de risco",
-        color_map=RISK_COLORS,
-        unit_suffix="Quantidade",
-        prefix=f"{unidade}_risco_qtd",
-        unidade=unidade
-    )
+        # remove meses totalmente zerados
+        if not risco_plot.empty:
+            risco_plot_original = risco_plot.copy()
+            soma_mes_risco = risco_plot.groupby("mes_label")["valor_num"].sum(min_count=1)
+            meses_validos_risco = soma_mes_risco[soma_mes_risco.fillna(0) > 0].index.tolist()
+            risco_plot = risco_plot[risco_plot["mes_label"].isin(meses_validos_risco)].copy()
+            if risco_plot.empty:
+                risco_plot = risco_plot_original
 
-    perc_plot = perc_risco[
-        ~perc_risco["serie_norm"].str.contains("TOTAL", na=False)
-    ].copy()
-
-    # fallback para bases que só trazem linha TOTAL no painel percentual
-    if perc_plot.empty:
-        perc_plot = perc_risco.copy()
-
-    # remove erros e meses vazios
-    perc_plot = perc_plot[perc_plot["valor_num"].notna()].copy()
-
-    if not perc_plot.empty:
-        perc_plot_original = perc_plot.copy()
-        soma_mes_perc = perc_plot.groupby("mes_label")["valor_num"].sum(min_count=1)
-        meses_validos_perc = soma_mes_perc[soma_mes_perc.fillna(0) > 0].index.tolist()
-        perc_plot = perc_plot[perc_plot["mes_label"].isin(meses_validos_perc)].copy()
-        if perc_plot.empty:
-            perc_plot = perc_plot_original
-
-        # Excel percentual vem como fração (ex.: 0.65) -> converter para 65
-        perc_plot["valor_num"] = perc_plot["valor_num"] * 100
-
-    grouped_bar(
-        perc_plot,
-        "Percentual de atendimentos por classificação de risco",
-        color_map=RISK_COLORS,
-        unit_suffix="Percentual (%)",
-        prefix=f"{unidade}_risco_perc",
-        unidade=unidade
-    )
-
-    line_time_chart(
-        espera,
-        "Tempo de espera para classificação de risco vs meta",
-        main_series="MÉDIA GERAL",
-        prefix=f"{unidade}_espera_class",
-        unidade=unidade
-    )
-
-    line_time_chart(
-        tempo_med,
-        "Tempo médio de espera de atendimento médico por classificação de risco",
-        prefix=f"{unidade}_tempo_med_risco",
-        unidade=unidade
-    )
-    section_end()
-
-    section_start("Permanência, apoio e desfechos", "Indicadores operacionais complementares e perfil da demanda")
-    col1, col2 = st.columns(2)
-    with col1:
-        line_time_chart(
-            intern,
-            "Tempo de permanência de pacientes internados",
-            prefix=f"{unidade}_intern",
-            unidade=unidade
-        )
-    with col2:
-        line_time_chart(
-            semint,
-            "Tempo de permanência de pacientes sem internação",
-            prefix=f"{unidade}_semintern",
-            unidade=unidade
-        )
-
-    col1, col2 = st.columns(2)
-    with col1:
         grouped_bar(
-            transf,
-            "Transferências (remoções)",
-            prefix=f"{unidade}_transf",
-            unidade=unidade
+            risco_plot,
+            "Atendimentos por classificação de risco",
+            color_map=RISK_COLORS,
+            unit_suffix="Quantidade",
+            prefix=f"{unidade}_risco_qtd",
+            unidade=unidade,
+            subtitle=""
         )
-    with col2:
+
+        perc_plot = perc_risco[
+            ~perc_risco["serie_norm"].str.contains("TOTAL", na=False)
+        ].copy()
+
+        # fallback para bases que só trazem linha TOTAL no painel percentual
+        if perc_plot.empty:
+            perc_plot = perc_risco.copy()
+
+        # remove erros e meses vazios
+        perc_plot = perc_plot[perc_plot["valor_num"].notna()].copy()
+
+        if not perc_plot.empty:
+            perc_plot_original = perc_plot.copy()
+            soma_mes_perc = perc_plot.groupby("mes_label")["valor_num"].sum(min_count=1)
+            meses_validos_perc = soma_mes_perc[soma_mes_perc.fillna(0) > 0].index.tolist()
+            perc_plot = perc_plot[perc_plot["mes_label"].isin(meses_validos_perc)].copy()
+            if perc_plot.empty:
+                perc_plot = perc_plot_original
+
+            # Excel percentual vem como fração (ex.: 0.65) -> converter para 65
+            perc_plot["valor_num"] = perc_plot["valor_num"] * 100
+
+        grouped_bar(
+            perc_plot,
+            "Percentual de atendimentos por classificação de risco",
+            color_map=RISK_COLORS,
+            unit_suffix="Percentual (%)",
+            prefix=f"{unidade}_risco_perc",
+            unidade=unidade,
+            subtitle=""
+        )
+
+        line_time_chart(
+            espera,
+            "Tempo de espera para classificação de risco vs meta",
+            main_series="MÉDIA GERAL",
+            prefix=f"{unidade}_espera_class",
+            unidade=unidade,
+            subtitle=""
+        )
+
+        line_time_chart(
+            tempo_med,
+            "Tempo médio de espera de atendimento médico por classificação de risco",
+            prefix=f"{unidade}_tempo_med_risco",
+            unidade=unidade,
+            subtitle=""
+        )
+        section_end()
+
+    with tab_perm:
+        section_start("Permanência, apoio e desfechos", "")
+        col1, col2 = st.columns(2)
+        with col1:
+            line_time_chart(
+                intern,
+                "Tempo de permanência de pacientes internados",
+                prefix=f"{unidade}_intern",
+                unidade=unidade,
+                subtitle=""
+            )
+        with col2:
+            line_time_chart(
+                semint,
+                "Tempo de permanência de pacientes sem internação",
+                prefix=f"{unidade}_semintern",
+                unidade=unidade,
+                subtitle=""
+            )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            grouped_bar(
+                transf,
+                "Transferências (remoções)",
+                prefix=f"{unidade}_transf",
+                unidade=unidade,
+                subtitle=""
+            )
+        with col2:
+            grouped_bar(
+                obitos,
+                "Óbitos",
+                prefix=f"{unidade}_obitos",
+                unidade=unidade,
+                subtitle=""
+            )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            grouped_bar(
+                origem[~origem["serie_norm"].eq("TOTAL")],
+                "Distribuição mais recente de pacientes por origem",
+                prefix=f"{unidade}_origem_bar",
+                unidade=unidade,
+                subtitle=""
+            )
+        with col2:
+            pie_latest(
+                origem[~origem["serie_norm"].eq("TOTAL")],
+                "Distribuição mais recente de pacientes por origem",
+                prefix=f"{unidade}_origem_pie",
+                unidade=unidade
+            )
+        section_end()
+
+    with tab_exames:
+        section_start("Exames internos", "")
         grouped_bar(
             exames[~exames["serie_norm"].eq("TOTAL")],
             "Exames internos",
             prefix=f"{unidade}_exames",
-            unidade=unidade
+            unidade=unidade,
+            subtitle=""
         )
 
         grouped_bar(
             faixa[~faixa["serie_norm"].eq("TOTAL")],
             "Atendimentos divididos por faixa etária",
             prefix=f"{unidade}_faixa",
-            unidade=unidade
+            unidade=unidade,
+            subtitle=""
         )
-
-    col1, col2 = st.columns(2)
-    with col1:
-        grouped_bar(
-            origem[~origem["serie_norm"].eq("TOTAL")],
-            "Atendimentos de pacientes da cidade x outras cidades",
-            prefix=f"{unidade}_origem_bar",
-            unidade=unidade
-        )
-    with col2:
-        pie_latest(
-            origem[~origem["serie_norm"].eq("TOTAL")],
-            "Distribuição mais recente de pacientes por origem",
-            prefix=f"{unidade}_origem_pie",
-            unidade=unidade
-        )
-
-        grouped_bar(
-            obitos,
-            "Óbitos",
-            prefix=f"{unidade}_obitos",
-            unidade=unidade
-        )
-    section_end()
+        section_end()
 
 def render_hmji(df, meses_filtrados=None):
     unidade = "HMJI"
@@ -3883,9 +4821,64 @@ def render_hmji(df, meses_filtrados=None):
             subtitle_color="#2563EB"
         )
 
-    col1, col2 = st.columns(2)
+    st.markdown(
+        """
+        <style>
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 0.6rem;
+            padding: 0.2rem 0.1rem 0.5rem 0.1rem;
+        }
 
-    with col1:
+        .stTabs [data-baseweb="tab"] {
+            background: linear-gradient(180deg, rgba(15,108,189,0.12) 0%, rgba(15,108,189,0.05) 100%);
+            border: 1px solid rgba(15,108,189,0.35);
+            border-radius: 12px;
+            padding: 0.5rem 0.95rem;
+            min-height: 44px;
+            box-shadow: 0 2px 8px rgba(15, 108, 189, 0.08);
+        }
+
+        .stTabs [data-baseweb="tab"] p {
+            font-size: 1rem;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+            color: #0b3b69;
+        }
+
+        .stTabs [aria-selected="true"] {
+            background: linear-gradient(180deg, rgba(15,108,189,0.24) 0%, rgba(15,108,189,0.12) 100%);
+            border: 2px solid #0F6CBD;
+            box-shadow: 0 0 0 1px rgba(15,108,189,0.15), 0 8px 18px rgba(15, 108, 189, 0.18);
+            transform: translateY(-1px);
+        }
+
+        .stTabs [aria-selected="true"] p {
+            color: #083055;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    (
+        tab_pacientes,
+        tab_obitos,
+        tab_esp,
+        tab_exames,
+        tab_cir,
+        tab_anes,
+    ) = st.tabs(
+        [
+            "Pacientes clínicos",
+            "Óbitos",
+            "Consultas especializadas",
+            "Exames internos",
+            "Procedimentos cirúrgicos",
+            "Anestesias",
+        ]
+    )
+
+    with tab_pacientes:
         fig = go.Figure()
 
         main = clin[clin["serie_norm"].isin([
@@ -3925,32 +4918,228 @@ def render_hmji(df, meses_filtrados=None):
         fig = apply_plotly_theme(
             fig,
             title="Pacientes clínicos atendidos / média diária",
-            subtitle=chart_subtitle(clin, unidade),
+            subtitle="",
             yaxis_title="Quantidade",
             height=360,
             legend=True,
             legend_orientation="h"
         )
         fig = apply_month_axis_order(fig, clin)
-        plot(fig, f"{unidade}_pacientes")
+        plot(fig, f"{unidade}_pacientes", show_status_chip=False)
 
-    with col2:
+    with tab_obitos:
         grouped_bar(
             obitos,
             "Óbitos",
             prefix=f"{unidade}_obitos",
-            unidade=unidade
+            unidade=unidade,
+            subtitle="",
+            show_status_chip=False,
         )
 
-    grouped_bar(esp, "Consultas especializadas", prefix=f"{unidade}_esp", unidade=unidade)
-    grouped_bar(exames, "Exames internos", prefix=f"{unidade}_exames", unidade=unidade)
-    grouped_bar(cir, "Procedimentos cirúrgicos", prefix=f"{unidade}_cir", unidade=unidade)
-    grouped_bar(anes, "Anestesias", prefix=f"{unidade}_anes", unidade=unidade)
+    with tab_esp:
+        grouped_bar(esp, "Consultas especializadas", prefix=f"{unidade}_esp", unidade=unidade, subtitle="", show_status_chip=False)
+
+    with tab_exames:
+        grouped_bar(exames, "Exames internos", prefix=f"{unidade}_exames", unidade=unidade, subtitle="", show_status_chip=False)
+
+    with tab_cir:
+        grouped_bar(cir, "Procedimentos cirúrgicos", prefix=f"{unidade}_cir", unidade=unidade, subtitle="", show_status_chip=False)
+
+    with tab_anes:
+        grouped_bar(anes, "Anestesias", prefix=f"{unidade}_anes", unidade=unidade, subtitle="", show_status_chip=False)
 
 def render_generic(df, unidade, paineis):
     st.subheader(unidade)
     for i,painel in enumerate(paineis, start=1):
         grouped_bar(filter_panel(df, unidade, painel), painel.title(), prefix=f"{unidade}_{i}")
+
+
+def render_atencao_primaria_tabs(df):
+    unidade = "ATENÇÃO PRIMÁRIA"
+    paineis = [
+        "CONSULTAS MÉDICAS",
+        "NÍVEL SUPERIOR (EXCETO MÉDICO)",
+    ]
+    titulos = [
+        "Consultas Médicas",
+        "Nível Superior (Exceto Médico)",
+    ]
+
+    st.subheader(unidade)
+    st.markdown(
+        """
+        <style>
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 0.6rem;
+            padding: 0.2rem 0.1rem 0.5rem 0.1rem;
+        }
+
+        .stTabs [data-baseweb="tab"] {
+            background: linear-gradient(180deg, rgba(15,108,189,0.12) 0%, rgba(15,108,189,0.05) 100%);
+            border: 1px solid rgba(15,108,189,0.35);
+            border-radius: 12px;
+            padding: 0.5rem 0.95rem;
+            min-height: 44px;
+            box-shadow: 0 2px 8px rgba(15, 108, 189, 0.08);
+        }
+
+        .stTabs [data-baseweb="tab"] p {
+            font-size: 1rem;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+            color: #0b3b69;
+        }
+
+        .stTabs [aria-selected="true"] {
+            background: linear-gradient(180deg, rgba(15,108,189,0.24) 0%, rgba(15,108,189,0.12) 100%);
+            border: 2px solid #0F6CBD;
+            box-shadow: 0 0 0 1px rgba(15,108,189,0.15), 0 8px 18px rgba(15, 108, 189, 0.18);
+            transform: translateY(-1px);
+        }
+
+        .stTabs [aria-selected="true"] p {
+            color: #083055;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    tabs = st.tabs(titulos)
+    for i, (tab, painel, titulo) in enumerate(zip(tabs, paineis, titulos), start=1):
+        with tab:
+            grouped_bar(
+                filter_panel(df, unidade, painel),
+                titulo,
+                prefix=f"{unidade}_tab_{i}",
+            )
+
+
+def render_atencao_secundaria_tabs(df):
+    unidade = "ATENÇÃO SECUNDÁRIA"
+    paineis = [
+        "CONSULTAS ESPECIALIZADAS (CAIS)",
+        "CONSULTAS ESPECIALIZADAS (MATERNO INFANTIL)",
+        "CONSULTAS ESPECIALIZADAS (FARMÁCIA CENTRAL)",
+    ]
+    titulos = [
+        "Consultas Especializadas (CAIS)",
+        "Consultas Especializadas (Materno Infantil)",
+        "Consultas Especializadas (Farmácia Central)",
+    ]
+
+    st.subheader(unidade)
+    st.markdown(
+        """
+        <style>
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 0.6rem;
+            padding: 0.2rem 0.1rem 0.5rem 0.1rem;
+        }
+
+        .stTabs [data-baseweb="tab"] {
+            background: linear-gradient(180deg, rgba(15,108,189,0.12) 0%, rgba(15,108,189,0.05) 100%);
+            border: 1px solid rgba(15,108,189,0.35);
+            border-radius: 12px;
+            padding: 0.5rem 0.95rem;
+            min-height: 44px;
+            box-shadow: 0 2px 8px rgba(15, 108, 189, 0.08);
+        }
+
+        .stTabs [data-baseweb="tab"] p {
+            font-size: 1rem;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+            color: #0b3b69;
+        }
+
+        .stTabs [aria-selected="true"] {
+            background: linear-gradient(180deg, rgba(15,108,189,0.24) 0%, rgba(15,108,189,0.12) 100%);
+            border: 2px solid #0F6CBD;
+            box-shadow: 0 0 0 1px rgba(15,108,189,0.15), 0 8px 18px rgba(15, 108, 189, 0.18);
+            transform: translateY(-1px);
+        }
+
+        .stTabs [aria-selected="true"] p {
+            color: #083055;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    tabs = st.tabs(titulos)
+    for i, (tab, painel, titulo) in enumerate(zip(tabs, paineis, titulos), start=1):
+        with tab:
+            grouped_bar(
+                filter_panel(df, unidade, painel),
+                titulo,
+                prefix=f"{unidade}_tab_{i}",
+            )
+
+
+def render_saude_mental_tabs(df):
+    unidade = "SAÚDE MENTAL"
+    paineis = [
+        "CONSULTAS ESPECIALIZADAS (CAPS II)",
+        "CONSULTAS ESPECIALIZADAS (CAPS AD III)",
+        "CONSULTAS ESPECIALIZADAS (CLÍNICA PSICOLOGIA)",
+    ]
+    titulos = [
+        "Consultas Especializadas (CAPS II)",
+        "Consultas Especializadas (CAPS AD III)",
+        "Consultas Especializadas (Clínica Psicologia)",
+    ]
+
+    st.subheader(unidade)
+    st.markdown(
+        """
+        <style>
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 0.6rem;
+            padding: 0.2rem 0.1rem 0.5rem 0.1rem;
+        }
+
+        .stTabs [data-baseweb="tab"] {
+            background: linear-gradient(180deg, rgba(15,108,189,0.12) 0%, rgba(15,108,189,0.05) 100%);
+            border: 1px solid rgba(15,108,189,0.35);
+            border-radius: 12px;
+            padding: 0.5rem 0.95rem;
+            min-height: 44px;
+            box-shadow: 0 2px 8px rgba(15, 108, 189, 0.08);
+        }
+
+        .stTabs [data-baseweb="tab"] p {
+            font-size: 1rem;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+            color: #0b3b69;
+        }
+
+        .stTabs [aria-selected="true"] {
+            background: linear-gradient(180deg, rgba(15,108,189,0.24) 0%, rgba(15,108,189,0.12) 100%);
+            border: 2px solid #0F6CBD;
+            box-shadow: 0 0 0 1px rgba(15,108,189,0.15), 0 8px 18px rgba(15, 108, 189, 0.18);
+            transform: translateY(-1px);
+        }
+
+        .stTabs [aria-selected="true"] p {
+            color: #083055;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    tabs = st.tabs(titulos)
+    for i, (tab, painel, titulo) in enumerate(zip(tabs, paineis, titulos), start=1):
+        with tab:
+            grouped_bar(
+                filter_panel(df, unidade, painel),
+                titulo,
+                prefix=f"{unidade}_tab_{i}",
+            )
 
 def rh_get_latest_month(panel_df):
     if panel_df is None or panel_df.empty:
@@ -4129,7 +5318,7 @@ def render_rh_indicator_card(nome_indicador, panel_df):
         subtitle_color="#64748B",
     )
 
-def render_rh_page(df, meses_filtrados):
+def render_rh_page(df, meses_filtrados, file_bytes=None, _mtime=None):
     unidade = "RH"
     st.subheader("Gestão de Pessoas")
 
@@ -4156,17 +5345,151 @@ def render_rh_page(df, meses_filtrados):
         for indicador in indicadores_rh
     }
 
-    section_start(
-        "Painel de indicadores de RH",
-        "Leitura executiva dos indicadores da aba INDICADORES RH com valor atual e referência mensal"
+    st.markdown(
+        """
+        <style>
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 0.6rem;
+            padding: 0.2rem 0.1rem 0.5rem 0.1rem;
+        }
+
+        .stTabs [data-baseweb="tab"] {
+            background: linear-gradient(180deg, rgba(15,108,189,0.12) 0%, rgba(15,108,189,0.05) 100%);
+            border: 1px solid rgba(15,108,189,0.35);
+            border-radius: 12px;
+            padding: 0.5rem 0.95rem;
+            min-height: 44px;
+            box-shadow: 0 2px 8px rgba(15, 108, 189, 0.08);
+        }
+
+        .stTabs [data-baseweb="tab"] p {
+            font-size: 1rem;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+            color: #0b3b69;
+        }
+
+        .stTabs [aria-selected="true"] {
+            background: linear-gradient(180deg, rgba(15,108,189,0.24) 0%, rgba(15,108,189,0.12) 100%);
+            border: 2px solid #0F6CBD;
+            box-shadow: 0 0 0 1px rgba(15,108,189,0.15), 0 8px 18px rgba(15, 108, 189, 0.18);
+            transform: translateY(-1px);
+        }
+
+        .stTabs [aria-selected="true"] p {
+            color: #083055;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
 
-    cols = st.columns(3)
-    for idx, indicador in enumerate(indicadores_rh):
-        with cols[idx % 3]:
-            render_rh_indicator_card(indicador, paineis[indicador])
+    tab_indicadores, tab_colaboradores = st.tabs(["📊 Indicadores RH", "👥 Colaboradores"])
 
-    section_end()
+    with tab_indicadores:
+        section_start(
+            "<strong>Painel de indicadores de RH</strong>",
+            ""
+        )
+
+        cols = st.columns(3)
+        for idx, indicador in enumerate(indicadores_rh):
+            with cols[idx % 3]:
+                render_rh_indicator_card(indicador, paineis[indicador])
+
+        section_end()
+
+    with tab_colaboradores:
+        section_start(
+            "Base completa de colaboradores",
+            ""
+        )
+
+        colab_full = load_colaboradores_sheet(file_bytes=file_bytes, _mtime=_mtime)
+        if colab_full is None or colab_full.empty:
+            st.info("A aba COLABORADORES não foi encontrada ou está sem dados na base atual.")
+            section_end()
+            return
+
+        def _pick_col(df_cols, aliases):
+            cols_norm = {normalize_text(c): c for c in df_cols}
+            for alias in aliases:
+                if alias in cols_norm:
+                    return cols_norm[alias]
+            for col in df_cols:
+                col_norm = normalize_text(col) or ""
+                if any(alias in col_norm for alias in aliases):
+                    return col
+            return None
+
+        col_nome = _pick_col(colab_full.columns, {"COLABORADOR", "NOME"})
+        col_situacao = _pick_col(colab_full.columns, {"SITUACAO", "SITUAÇÃO", "STATUS"})
+        col_cargo = _pick_col(colab_full.columns, {"CARGO"})
+        col_un1 = _pick_col(colab_full.columns, {"UNIDADE"})
+        col_un2 = _pick_col(colab_full.columns, {"UNIDADE 2", "UNIDADE2"})
+        col_un3 = _pick_col(colab_full.columns, {"UNIDADE 3", "UNIDADE3"})
+
+        filtro_cols = st.columns([1.6, 1.2, 1.2, 1.2])
+        busca_nome = filtro_cols[0].text_input("Buscar colaborador", value="", key="rh_colab_busca")
+
+        situacao_options = []
+        if col_situacao:
+            situacao_options = sorted(
+                colab_full[col_situacao].dropna().astype(str).str.strip().replace("", pd.NA).dropna().unique().tolist()
+            )
+        filtro_situacao = filtro_cols[1].multiselect(
+            "Situação",
+            options=situacao_options,
+            default=[],
+            key="rh_colab_situacao",
+        )
+
+        cargo_options = []
+        if col_cargo:
+            cargo_options = sorted(
+                colab_full[col_cargo].dropna().astype(str).str.strip().replace("", pd.NA).dropna().unique().tolist()
+            )
+        filtro_cargo = filtro_cols[2].multiselect(
+            "Cargo",
+            options=cargo_options,
+            default=[],
+            key="rh_colab_cargo",
+        )
+
+        unidade_options = set()
+        for uc in [col_un1, col_un2, col_un3]:
+            if not uc:
+                continue
+            unidade_options.update(
+                colab_full[uc].dropna().astype(str).str.strip().replace("", pd.NA).dropna().unique().tolist()
+            )
+        filtro_unidade = filtro_cols[3].multiselect(
+            "Unidade",
+            options=sorted(unidade_options),
+            default=[],
+            key="rh_colab_unidade",
+        )
+
+        colab_view = colab_full.copy()
+        if busca_nome and col_nome:
+            colab_view = colab_view[
+                colab_view[col_nome].astype(str).str.contains(busca_nome, case=False, na=False)
+            ]
+        if filtro_situacao and col_situacao:
+            colab_view = colab_view[colab_view[col_situacao].astype(str).isin(filtro_situacao)]
+        if filtro_cargo and col_cargo:
+            colab_view = colab_view[colab_view[col_cargo].astype(str).isin(filtro_cargo)]
+        if filtro_unidade:
+            unidade_mask = pd.Series(False, index=colab_view.index)
+            for uc in [col_un1, col_un2, col_un3]:
+                if uc:
+                    unidade_mask = unidade_mask | colab_view[uc].astype(str).isin(filtro_unidade)
+            colab_view = colab_view[unidade_mask]
+
+        st.caption(f"Registros exibidos: {len(colab_view):,}".replace(",", "."))
+        st.dataframe(colab_view, width="stretch", hide_index=True)
+
+        section_end()
 
 
 def render_produtividade_medica_page():
@@ -4266,89 +5589,148 @@ def render_produtividade_medica_page():
     with k4:
         top_kpi_card("Pior dia", f"{int(pior):,}".replace(",", "."), icon="📉", subtitle=f"Data: {pior_dia}", accent_color=SEMANTIC_COLORS["danger"], subtitle_color=SEMANTIC_COLORS["danger"])
 
-    section_start("Evolução diária", "Atendimentos por dia")
-    if not kpi_df.empty:
-        ln = kpi_df.sort_values("Data")
-        fig = go.Figure()
-        fig.add_trace(
-            go.Scatter(
-                x=ln["Data"],
-                y=ln["valor"],
-                mode="lines+markers",
-                line=dict(color=SEMANTIC_COLORS["primary"], width=3),
-                marker=dict(size=6),
-                hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Total: %{y:,.0f}<extra></extra>",
+    st.markdown(
+        """
+        <style>
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 0.7rem;
+            padding: 0.15rem 0 0.65rem 0;
+            overflow-x: auto;
+        }
+
+        .stTabs [data-baseweb="tab"] {
+            background: linear-gradient(180deg, #F5FAFF 0%, #EDF5FC 100%);
+            border: 1px solid #BDD5EA;
+            border-radius: 14px;
+            padding: 0.48rem 1.05rem;
+            min-height: 48px;
+            box-shadow: 0 2px 8px rgba(15, 108, 189, 0.08);
+            transition: all 0.18s ease;
+        }
+
+        .stTabs [data-baseweb="tab"]:hover {
+            background: linear-gradient(180deg, #F0F7FF 0%, #E6F0FA 100%);
+            border-color: #8CB8DF;
+        }
+
+        .stTabs [data-baseweb="tab"] p {
+            font-size: 0.98rem;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+            color: #0B3B69;
+        }
+
+        .stTabs [aria-selected="true"] {
+            background: linear-gradient(180deg, #FFFFFF 0%, #F4F9FE 100%);
+            border: 2px solid #0F6CBD;
+            box-shadow: inset 0 -3px 0 #EF4444, 0 8px 18px rgba(15, 108, 189, 0.14);
+            transform: translateY(-1px);
+        }
+
+        .stTabs [aria-selected="true"] p {
+            color: #083055;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    tab_evolucao, tab_unidade, tab_semanal, tab_top5, tab_ranking = st.tabs([
+        "📈 Evolução diária",
+        "🏥 Produção por unidade",
+        "🗓️ Produção semanal",
+        "🥇 Top 5 médicos",
+        "📋 Ranking completo",
+    ])
+
+    with tab_evolucao:
+        section_start("", "")
+        if not kpi_df.empty:
+            ln = kpi_df.sort_values("Data")
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=ln["Data"],
+                    y=ln["valor"],
+                    mode="lines+markers",
+                    line=dict(color=SEMANTIC_COLORS["primary"], width=3),
+                    marker=dict(size=6),
+                    hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Total: %{y:,.0f}<extra></extra>",
+                )
             )
-        )
-        fig = apply_plotly_theme(fig, title="Atendimentos diários", subtitle="", yaxis_title="Atendimentos", height=360, legend=False)
-        plot(fig, "pm_evolucao")
-    else:
-        st.info("Sem dados para o período selecionado.")
-    section_end()
+            fig = apply_plotly_theme(fig, title="Atendimentos diários", subtitle="", yaxis_title="Atendimentos", height=360, legend=False)
+            plot(fig, "pm_evolucao")
+        else:
+            st.info("Sem dados para o período selecionado.")
+        section_end()
 
-    section_start("Produção por unidade", "UPA II · UPA I")
-    ucols = [c for c in ["UPA II DE LUZIÂNIA", "UPA I JARDIM INGÁ"] if c in kd.columns]
-    if ucols and not kd.empty and "Data" in kd.columns:
-        plot_cols = ucols if unid == "Todas" else [c for c in ucols if c == unid]
-        if plot_cols:
-            lng = kd[["Data"] + plot_cols].melt(id_vars="Data", var_name="Unidade", value_name="Atendimentos").dropna(subset=["Atendimentos", "Data"]).sort_values("Data")
-            fig2 = px.line(
-                lng,
-                x="Data",
-                y="Atendimentos",
-                color="Unidade",
-                markers=True,
-                color_discrete_sequence=[SEMANTIC_COLORS["series_1"], SEMANTIC_COLORS["series_2"], SEMANTIC_COLORS["series_3"]],
+    with tab_unidade:
+        section_start("", "")
+        ucols = [c for c in ["UPA II DE LUZIÂNIA", "UPA I JARDIM INGÁ"] if c in kd.columns]
+        if ucols and not kd.empty and "Data" in kd.columns:
+            plot_cols = ucols if unid == "Todas" else [c for c in ucols if c == unid]
+            if plot_cols:
+                lng = kd[["Data"] + plot_cols].melt(id_vars="Data", var_name="Unidade", value_name="Atendimentos").dropna(subset=["Atendimentos", "Data"]).sort_values("Data")
+                fig2 = px.line(
+                    lng,
+                    x="Data",
+                    y="Atendimentos",
+                    color="Unidade",
+                    markers=True,
+                    color_discrete_sequence=[SEMANTIC_COLORS["series_1"], SEMANTIC_COLORS["series_2"], SEMANTIC_COLORS["series_3"]],
+                )
+                fig2.update_traces(hovertemplate="<b>%{fullData.name}</b><br>%{x|%d/%m/%Y}<br>%{y:,.0f}<extra></extra>")
+                fig2 = apply_plotly_theme(fig2, title="Atendimentos por unidade", subtitle="", yaxis_title="Atendimentos", height=360, legend=True, legend_orientation="h")
+                plot(fig2, "pm_unidades")
+        else:
+            st.info("Sem dados por unidade.")
+        section_end()
+
+    with tab_semanal:
+        section_start("", "")
+        semanal_col_map = {
+            "Todas": "Total_Semana_Geral",
+            "UPA II DE LUZIÂNIA": "Total_Semana_UPA_II",
+            "UPA I JARDIM INGÁ": "Total_Semana_UPA_I",
+        }
+        semanal_col = semanal_col_map.get(unid, "Total_Semana_Geral")
+        semanal_titulo = ""
+
+        if not ks.empty and semanal_col in ks.columns and "Semana_Inicio" in ks.columns and "Semana_Fim" in ks.columns:
+            sp = ks.sort_values("Semana_Inicio").copy()
+            sp["Semana"] = sp.apply(
+                lambda r: f"{r['Semana_Inicio'].strftime('%d/%m')} - {r['Semana_Fim'].strftime('%d/%m')}" if pd.notna(r.get("Semana_Inicio")) and pd.notna(r.get("Semana_Fim")) else "-",
+                axis=1,
             )
-            fig2.update_traces(hovertemplate="<b>%{fullData.name}</b><br>%{x|%d/%m/%Y}<br>%{y:,.0f}<extra></extra>")
-            fig2 = apply_plotly_theme(fig2, title="Atendimentos por unidade", subtitle="", yaxis_title="Atendimentos", height=360, legend=True, legend_orientation="h")
-            plot(fig2, "pm_unidades")
-    else:
-        st.info("Sem dados por unidade.")
-    section_end()
+            fig3 = px.bar(sp, x="Semana", y=semanal_col, color_discrete_sequence=[SEMANTIC_COLORS["primary_soft"]])
+            fig3.update_traces(marker_line_width=0, hovertemplate="<b>%{x}</b><br>%{y:,.0f}<extra></extra>")
+            fig3 = apply_plotly_theme(fig3, title=semanal_titulo, subtitle="", yaxis_title="Atendimentos", height=340, legend=False)
+            plot(fig3, "pm_semanal")
+        else:
+            st.info("Sem dados semanais.")
+        section_end()
 
-    section_start("Produção semanal", "Totais consolidados por semana")
-    semanal_col_map = {
-        "Todas": "Total_Semana_Geral",
-        "UPA II DE LUZIÂNIA": "Total_Semana_UPA_II",
-        "UPA I JARDIM INGÁ": "Total_Semana_UPA_I",
-    }
-    semanal_col = semanal_col_map.get(unid, "Total_Semana_Geral")
-    semanal_titulo = "Produção semanal geral" if unid == "Todas" else f"Produção semanal - {unid}"
+    with tab_top5:
+        section_start("", "")
+        if not top5_ref.empty and "Médico" in top5_ref.columns and "Total_Atendimentos" in top5_ref.columns:
+            fig4 = px.bar(top5_ref, y="Médico", x="Total_Atendimentos", orientation="h", color="Total_Atendimentos", color_continuous_scale=[SEMANTIC_COLORS["primary_soft"], SEMANTIC_COLORS["primary"]])
+            fig4.update_traces(hovertemplate="<b>%{y}</b><br>%{x:,.0f} atendimentos<extra></extra>")
+            fig4 = apply_plotly_theme(fig4, title="Top 5 por atendimentos", subtitle="", yaxis_title="", height=340, legend=False)
+            fig4.update_xaxes(title_text="Atendimentos")
+            plot(fig4, "pm_top5")
+        else:
+            st.info("Sem dados de Top 5.")
+        section_end()
 
-    if not ks.empty and semanal_col in ks.columns and "Semana_Inicio" in ks.columns and "Semana_Fim" in ks.columns:
-        sp = ks.sort_values("Semana_Inicio").copy()
-        sp["Semana"] = sp.apply(
-            lambda r: f"{r['Semana_Inicio'].strftime('%d/%m')} - {r['Semana_Fim'].strftime('%d/%m')}" if pd.notna(r.get("Semana_Inicio")) and pd.notna(r.get("Semana_Fim")) else "-",
-            axis=1,
-        )
-        fig3 = px.bar(sp, x="Semana", y=semanal_col, color_discrete_sequence=[SEMANTIC_COLORS["primary_soft"]])
-        fig3.update_traces(marker_line_width=0, hovertemplate="<b>%{x}</b><br>%{y:,.0f}<extra></extra>")
-        fig3 = apply_plotly_theme(fig3, title=semanal_titulo, subtitle="", yaxis_title="Atendimentos", height=340, legend=False)
-        plot(fig3, "pm_semanal")
-    else:
-        st.info("Sem dados semanais.")
-    section_end()
-
-    section_start("Top 5 médicos", "Ranking dos 5 primeiros no período")
-    if not top5_ref.empty and "Médico" in top5_ref.columns and "Total_Atendimentos" in top5_ref.columns:
-        fig4 = px.bar(top5_ref, y="Médico", x="Total_Atendimentos", orientation="h", color="Total_Atendimentos", color_continuous_scale=[SEMANTIC_COLORS["primary_soft"], SEMANTIC_COLORS["primary"]])
-        fig4.update_traces(hovertemplate="<b>%{y}</b><br>%{x:,.0f} atendimentos<extra></extra>")
-        fig4 = apply_plotly_theme(fig4, title="Top 5 por atendimentos", subtitle="", yaxis_title="", height=340, legend=False)
-        fig4.update_xaxes(title_text="Atendimentos")
-        plot(fig4, "pm_top5")
-    else:
-        st.info("Sem dados de Top 5.")
-    section_end()
-
-    section_start("Ranking completo", "Todos os médicos ordenados por atendimentos")
-    if not rk.empty:
-        rcols = [c for c in ["Médico", "Unidade", "Total_Atendimentos", "Plantoes", "Media_por_Plantao", "Media_por_Hora"] if c in rk.columns]
-        rv = rk.sort_values("Total_Atendimentos", ascending=False) if "Total_Atendimentos" in rk.columns else rk
-        st.dataframe(rv[rcols].reset_index(drop=True), use_container_width=True)
-    else:
-        st.info("Sem dados de ranking.")
-    section_end()
+    with tab_ranking:
+        section_start("", "")
+        if not rk.empty:
+            rcols = [c for c in ["Médico", "Unidade", "Total_Atendimentos", "Plantoes", "Media_por_Plantao", "Media_por_Hora"] if c in rk.columns]
+            rv = rk.sort_values("Total_Atendimentos", ascending=False) if "Total_Atendimentos" in rk.columns else rk
+            st.dataframe(rv[rcols].reset_index(drop=True), use_container_width=True)
+        else:
+            st.info("Sem dados de ranking.")
+        section_end()
 
 
 def render_samu_page():
@@ -4366,15 +5748,48 @@ def render_samu_page():
     data_min = diario["Data"].dropna().min().date() if "Data" in diario.columns and not diario["Data"].dropna().empty else None
     data_max = diario["Data"].dropna().max().date() if "Data" in diario.columns and not diario["Data"].dropna().empty else None
 
-    st.markdown("#### Filtros")
-    if data_min and data_max:
-        periodo = st.date_input(
-            "Período",
-            value=(data_min, data_max),
-            key="samu_periodo",
-        )
-    else:
-        periodo = None
+    st.markdown(
+        """
+        <div style="margin: 2px 0 4px 0; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: #64748B;">
+            Filtros
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stDateInput"] {
+            max-width: 320px;
+        }
+        div[data-testid="stDateInput"] input {
+            min-height: 34px !important;
+            padding: 0.24rem 0.62rem !important;
+            font-size: 0.90rem !important;
+            border-radius: 10px !important;
+            border: 1px solid #CBD5E1 !important;
+            background: #F8FAFC !important;
+            box-shadow: none !important;
+        }
+        div[data-testid="stDateInput"] input:focus {
+            border-color: #94A3B8 !important;
+            box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.18) !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    filtro_col, _ = st.columns([0.36, 0.64])
+    with filtro_col:
+        if data_min and data_max:
+            periodo = st.date_input(
+                "Período",
+                value=(data_min, data_max),
+                key="samu_periodo",
+                label_visibility="collapsed",
+            )
+        else:
+            periodo = None
 
     st.caption(f"Fonte: {titulo}")
     st.divider()
@@ -4423,7 +5838,7 @@ def render_samu_page():
             "Média diária",
             f"{media_diaria:,.1f}".replace(",", "."),
             icon="📆",
-            subtitle="Atendimentos por dia",
+            subtitle="",
             accent_color=SEMANTIC_COLORS["primary"],
             subtitle_color=SEMANTIC_COLORS["primary"],
         )
@@ -4446,188 +5861,230 @@ def render_samu_page():
             subtitle_color=SEMANTIC_COLORS["danger"],
         )
 
-    section_start("Metas mensais prioritárias", "Indicadores críticos com meta mensal definida")
-    metas_samu = [
-        {
-            "descricao": "ATENDIMENTO REALIZADO PELA USA TERRESTRE (COM ENVIO DA VIATURA)",
-            "meta_mensal": 60.5,
-            "termos_chave": [
-                "ATENDIMENTO REALIZADO",
-                "USA TERRESTRE",
-                "ENVIO DA VIATURA",
-            ],
-        },
-        {
-            "descricao": "ATENDIMENTO DAS CHAMADAS RECEBIDAS PELA CENTRAL DE REGULAÇÃO DAS URGÊNCIAS COM ORIENTAÇÃO (SEM ENVIO DE VIATURA)",
-            "meta_mensal": 148.5,
-            "termos_chave": [
-                "ATENDIMENTO DAS CHAMADAS RECEBIDAS",
-                "CENTRAL DE REGULACAO DAS URGENCIAS",
-                "ORIENTACAO",
-                "SEM ENVIO DE VIATURA",
-            ],
-        },
-    ]
+    st.markdown(
+        """
+        <style>
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 0.6rem;
+            padding: 0.2rem 0.1rem 0.5rem 0.1rem;
+        }
 
-    col_meta_1, col_meta_2 = st.columns(2)
-    for idx_meta, meta_cfg in enumerate(metas_samu):
-        container = col_meta_1 if idx_meta == 0 else col_meta_2
-        with container:
-            desc_norm = procedimentos_total["Descricao"].fillna("").astype(str).map(normalize_text)
-            mask = desc_norm.map(
-                lambda d: all(term in d for term in meta_cfg["termos_chave"])
-            )
-            realizado = float(procedimentos_total.loc[mask, "Atendimentos"].sum()) if mask.any() else 0.0
-            meta_mensal = float(meta_cfg["meta_mensal"])
-            atingimento_pct = ((realizado / meta_mensal) * 100) if meta_mensal > 0 else None
-            saldo_pct = (((realizado - meta_mensal) / meta_mensal) * 100) if meta_mensal > 0 else None
+        .stTabs [data-baseweb="tab"] {
+            background: linear-gradient(180deg, rgba(15,108,189,0.12) 0%, rgba(15,108,189,0.05) 100%);
+            border: 1px solid rgba(15,108,189,0.35);
+            border-radius: 12px;
+            padding: 0.5rem 0.95rem;
+            min-height: 44px;
+            box-shadow: 0 2px 8px rgba(15, 108, 189, 0.08);
+        }
 
-            render_meta_card(
-                meta_cfg["descricao"],
-                realizado,
-                meta_mensal,
-                atingimento_pct,
-                saldo_pct,
-            )
-    section_end()
+        .stTabs [data-baseweb="tab"] p {
+            font-size: 1rem;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+            color: #0b3b69;
+        }
 
-    section_start("Evolução diária", "Atendimentos totais por dia")
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=diario_total["Data"],
-            y=diario_total["Atendimentos"],
-            mode="lines+markers",
-            line=dict(color=SEMANTIC_COLORS["primary"], width=3),
-            marker=dict(size=6),
-            hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>",
-        )
+        .stTabs [aria-selected="true"] {
+            background: linear-gradient(180deg, rgba(15,108,189,0.24) 0%, rgba(15,108,189,0.12) 100%);
+            border: 2px solid #0F6CBD;
+            box-shadow: 0 0 0 1px rgba(15,108,189,0.15), 0 8px 18px rgba(15, 108, 189, 0.18);
+            transform: translateY(-1px);
+        }
+
+        .stTabs [aria-selected="true"] p {
+            color: #083055;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
-    fig = apply_plotly_theme(
-        fig,
-        title="Produção diária do SAMU",
-        subtitle="",
-        yaxis_title="Atendimentos",
-        height=350,
-        legend=False,
-    )
-    plot(fig, "samu_evolucao_diaria")
-    section_end()
 
-    section_start("Top procedimentos", "Maiores volumes no período filtrado")
-    top_proc = procedimentos_total.head(10).copy()
-    if not top_proc.empty:
-        fig2 = px.bar(
-            top_proc.sort_values("Atendimentos", ascending=True),
-            x="Atendimentos",
-            y="Descricao",
-            orientation="h",
-            color_discrete_sequence=[SEMANTIC_COLORS["primary_soft"]],
+    tab_meta, tab_prod, tab_top, tab_inds, tab_resumo = st.tabs([
+        "Metas mensais prioritárias",
+        "Produção diária do SAMU",
+        "Top 10 procedimentos",
+        "Indicadores",
+        "Resumo por procedimento",
+    ])
+
+    with tab_meta:
+        section_start("", "")
+        metas_samu = [
+            {
+                "descricao": "ATENDIMENTO REALIZADO PELA USA TERRESTRE (COM ENVIO DA VIATURA)",
+                "meta_mensal": 60.5,
+                "termos_chave": [
+                    "ATENDIMENTO REALIZADO",
+                    "USA TERRESTRE",
+                    "ENVIO DA VIATURA",
+                ],
+            },
+            {
+                "descricao": "ATENDIMENTO DAS CHAMADAS RECEBIDAS PELA CENTRAL DE REGULAÇÃO DAS URGÊNCIAS COM ORIENTAÇÃO (SEM ENVIO DE VIATURA)",
+                "meta_mensal": 148.5,
+                "termos_chave": [
+                    "ATENDIMENTO DAS CHAMADAS RECEBIDAS",
+                    "CENTRAL DE REGULACAO DAS URGENCIAS",
+                    "ORIENTACAO",
+                    "SEM ENVIO DE VIATURA",
+                ],
+            },
+        ]
+
+        col_meta_1, col_meta_2 = st.columns(2)
+        for idx_meta, meta_cfg in enumerate(metas_samu):
+            container = col_meta_1 if idx_meta == 0 else col_meta_2
+            with container:
+                desc_norm = procedimentos_total["Descricao"].fillna("").astype(str).map(normalize_text)
+                mask = desc_norm.map(
+                    lambda d: all(term in d for term in meta_cfg["termos_chave"])
+                )
+                realizado = float(procedimentos_total.loc[mask, "Atendimentos"].sum()) if mask.any() else 0.0
+                meta_mensal = float(meta_cfg["meta_mensal"])
+                atingimento_pct = ((realizado / meta_mensal) * 100) if meta_mensal > 0 else None
+                saldo_pct = (((realizado - meta_mensal) / meta_mensal) * 100) if meta_mensal > 0 else None
+
+                render_meta_card(
+                    meta_cfg["descricao"],
+                    realizado,
+                    meta_mensal,
+                    atingimento_pct,
+                    saldo_pct,
+                )
+        section_end()
+
+    with tab_prod:
+        section_start("", "")
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=diario_total["Data"],
+                y=diario_total["Atendimentos"],
+                mode="lines+markers",
+                line=dict(color=SEMANTIC_COLORS["primary"], width=3),
+                marker=dict(size=6),
+                hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>",
+            )
         )
-        fig2.update_traces(hovertemplate="<b>%{y}</b><br>%{x:,.0f}<extra></extra>")
-        fig2 = apply_plotly_theme(
-            fig2,
-            title="Top 10 procedimentos",
+        fig = apply_plotly_theme(
+            fig,
+            title="Produção diária do SAMU",
             subtitle="",
-            yaxis_title="",
-            height=420,
+            yaxis_title="Atendimentos",
+            height=350,
             legend=False,
         )
-        fig2.update_xaxes(title_text="Atendimentos")
-        plot(fig2, "samu_top_procedimentos")
-    else:
-        st.info("Sem dados de procedimentos para o período selecionado.")
-    section_end()
+        st.plotly_chart(fig, use_container_width=True, key="samu_evolucao_diaria")
+        section_end()
 
-    section_start("Gráficos por indicador", "Evolução diária individual de cada indicador da aba SAMU")
-    indicadores_ordenados = procedimentos_total[["Descricao", "Codigo_SIGTAP", "Atendimentos"]].copy()
-    indicadores_ordenados = indicadores_ordenados.sort_values("Atendimentos", ascending=False).reset_index(drop=True)
-
-    if indicadores_ordenados.empty:
-        st.info("Sem indicadores com produção no período selecionado.")
-    else:
-        for idx, row in indicadores_ordenados.iterrows():
-            descricao = str(row.get("Descricao", "Indicador"))
-            codigo_sigtap = row.get("Codigo_SIGTAP")
-            codigo_txt = str(codigo_sigtap) if pd.notna(codigo_sigtap) else "-"
-
-            serie_indicador = (
-                diario_filtrado[diario_filtrado["Descricao"] == descricao]
-                .groupby("Data", as_index=False)["Atendimentos"]
-                .sum()
-                .sort_values("Data")
+    with tab_top:
+        section_start("", "")
+        top_proc = procedimentos_total.head(10).copy()
+        if not top_proc.empty:
+            fig2 = px.bar(
+                top_proc.sort_values("Atendimentos", ascending=True),
+                x="Atendimentos",
+                y="Descricao",
+                orientation="h",
+                color_discrete_sequence=[SEMANTIC_COLORS["primary_soft"]],
             )
-
-            if serie_indicador.empty:
-                continue
-
-            total_ind = float(serie_indicador["Atendimentos"].sum())
-            media_ind = float(serie_indicador["Atendimentos"].mean())
-            melhor_ind = float(serie_indicador["Atendimentos"].max())
-
-            st.markdown(f"#### {idx + 1}. {descricao}")
-            st.caption(
-                f"SIGTAP: {codigo_txt} · Total: {int(total_ind):,} · Média diária: {media_ind:,.1f} · Pico diário: {int(melhor_ind):,}".replace(",", ".")
-            )
-
-            fig_ind = go.Figure()
-            fig_ind.add_trace(
-                go.Scatter(
-                    x=serie_indicador["Data"],
-                    y=serie_indicador["Atendimentos"],
-                    mode="lines+markers",
-                    line=dict(color=SEMANTIC_COLORS["series_2"], width=2.8),
-                    marker=dict(size=6, color=SEMANTIC_COLORS["series_2"]),
-                    hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>",
-                )
-            )
-            fig_ind = apply_plotly_theme(
-                fig_ind,
-                title=f"{descricao}",
+            fig2.update_traces(hovertemplate="<b>%{y}</b><br>%{x:,.0f}<extra></extra>")
+            fig2 = apply_plotly_theme(
+                fig2,
+                title="Top 10 procedimentos",
                 subtitle="",
-                yaxis_title="Atendimentos",
-                height=300,
+                yaxis_title="",
+                height=420,
                 legend=False,
             )
-            plot(fig_ind, f"samu_indicador_{idx}")
-            st.divider()
-    section_end()
+            fig2.update_xaxes(title_text="Atendimentos")
+            st.plotly_chart(fig2, use_container_width=True, key="samu_top_procedimentos")
+        else:
+            st.info("Sem dados de procedimentos para o período selecionado.")
+        section_end()
 
-    section_start("Resumo por procedimento", "Totais do período e colunas de meta da aba SAMU")
-    resumo_periodo = procedimentos_total.rename(columns={"Atendimentos": "Total_Periodo"})
-    tabela_resumo = resumo_periodo.merge(
-        resumo[["Descricao", "Codigo_SIGTAP", "Meta", "Falta", "Eficacia"]],
-        on=["Descricao", "Codigo_SIGTAP"],
-        how="left",
-    )
-    tabela_resumo = tabela_resumo.sort_values("Total_Periodo", ascending=False).reset_index(drop=True)
+    with tab_inds:
+        section_start("", "")
+        indicadores_ordenados = procedimentos_total[["Descricao", "Codigo_SIGTAP", "Atendimentos"]].copy()
+        indicadores_ordenados = indicadores_ordenados.sort_values("Atendimentos", ascending=False).reset_index(drop=True)
 
-    if "Eficacia" in tabela_resumo.columns:
-        tabela_resumo["Eficacia_pct"] = (pd.to_numeric(tabela_resumo["Eficacia"], errors="coerce") * 100).round(1)
-    else:
-        tabela_resumo["Eficacia_pct"] = pd.NA
+        if indicadores_ordenados.empty:
+            st.info("Sem indicadores com produção no período selecionado.")
+        else:
+            for idx, row in indicadores_ordenados.iterrows():
+                descricao = str(row.get("Descricao", "Indicador"))
 
-    st.dataframe(
-        tabela_resumo[
-            [
-                "Descricao",
-                "Codigo_SIGTAP",
-                "Total_Periodo",
-                "Meta",
-                "Falta",
-                "Eficacia_pct",
-            ]
-        ].rename(columns={
-            "Descricao": "Descrição",
-            "Codigo_SIGTAP": "Cód. SIGTAP",
-            "Total_Periodo": "Total no período",
-            "Meta": "Meta",
-            "Falta": "Falta",
-            "Eficacia_pct": "% Eficácia",
-        }),
-        use_container_width=True,
-    )
-    section_end()
+                serie_indicador = (
+                    diario_filtrado[diario_filtrado["Descricao"] == descricao]
+                    .groupby("Data", as_index=False)["Atendimentos"]
+                    .sum()
+                    .sort_values("Data")
+                )
+
+                if serie_indicador.empty:
+                    continue
+
+                fig_ind = go.Figure()
+                fig_ind.add_trace(
+                    go.Scatter(
+                        x=serie_indicador["Data"],
+                        y=serie_indicador["Atendimentos"],
+                        mode="lines+markers",
+                        line=dict(color=SEMANTIC_COLORS["series_2"], width=2.8),
+                        marker=dict(size=6, color=SEMANTIC_COLORS["series_2"]),
+                        hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Atendimentos: %{y:,.0f}<extra></extra>",
+                    )
+                )
+                fig_ind = apply_plotly_theme(
+                    fig_ind,
+                    title=f"{descricao}",
+                    subtitle="",
+                    yaxis_title="Atendimentos",
+                    height=300,
+                    legend=False,
+                )
+                st.plotly_chart(fig_ind, use_container_width=True, key=f"samu_indicador_{idx}")
+                st.divider()
+
+        section_end()
+
+    with tab_resumo:
+        section_start("", "")
+        resumo_periodo = procedimentos_total.rename(columns={"Atendimentos": "Total_Periodo"})
+        tabela_resumo = resumo_periodo.merge(
+            resumo[["Descricao", "Codigo_SIGTAP", "Meta", "Falta", "Eficacia"]],
+            on=["Descricao", "Codigo_SIGTAP"],
+            how="left",
+        )
+        tabela_resumo = tabela_resumo.sort_values("Total_Periodo", ascending=False).reset_index(drop=True)
+
+        if "Eficacia" in tabela_resumo.columns:
+            tabela_resumo["Eficacia_pct"] = (pd.to_numeric(tabela_resumo["Eficacia"], errors="coerce") * 100).round(1)
+        else:
+            tabela_resumo["Eficacia_pct"] = pd.NA
+
+        st.dataframe(
+            tabela_resumo[
+                [
+                    "Descricao",
+                    "Codigo_SIGTAP",
+                    "Total_Periodo",
+                    "Meta",
+                    "Falta",
+                    "Eficacia_pct",
+                ]
+            ].rename(columns={
+                "Descricao": "Descrição",
+                "Codigo_SIGTAP": "Cód. SIGTAP",
+                "Total_Periodo": "Total no período",
+                "Meta": "Meta",
+                "Falta": "Falta",
+                "Eficacia_pct": "% Eficácia",
+            }),
+            use_container_width=True,
+        )
+        section_end()
 
 
 # ---------------------------------------------------------------------------
@@ -4708,9 +6165,8 @@ def render_heatmap_page():
     if has_celk:
         # Unidades detectadas no CELK
         unidades_celk = sorted(
-            [u for u in celk["UNIDADE_PAINEL"].dropna().unique()
-             if u in ("UPA II Luziânia", "UPA I Jardim Ingá")],
-            key=lambda x: (0 if "II" in x else 1)
+            [u for u in celk["UNIDADE_PAINEL"].dropna().unique() if _is_upa_unit(u)],
+            key=lambda x: (0 if "II" in (normalize_text(x) or "") else 1, x)
         )
         # Ordena meses cronologicamente e filtra outliers (>= 50 registros no mês)
         _mes_counts = celk["MES_LABEL"].value_counts()
@@ -4733,216 +6189,311 @@ def render_heatmap_page():
     # SEÇÃO 1 — Hora × Dia da Semana  (CELK)
     # ════════════════════════════════════════════════════════════════════
     if has_celk:
-        section_start(
-            "🕐 Heatmap de Fluxo Horário — Hora × Dia da Semana",
-            "Concentração de atendimentos por hora do dia e dia da semana "
-            "(cada célula = total de registros no período selecionado)"
+        st.markdown(
+            """
+            <style>
+            .stTabs [data-baseweb="tab-list"] {
+                gap: 0.6rem;
+                padding: 0.2rem 0.1rem 0.5rem 0.1rem;
+            }
+
+            .stTabs [data-baseweb="tab"] {
+                background: linear-gradient(180deg, rgba(15,108,189,0.12) 0%, rgba(15,108,189,0.05) 100%);
+                border: 1px solid rgba(15,108,189,0.35);
+                border-radius: 12px;
+                padding: 0.5rem 0.95rem;
+                min-height: 44px;
+                box-shadow: 0 2px 8px rgba(15, 108, 189, 0.08);
+            }
+
+            .stTabs [data-baseweb="tab"] p {
+                font-size: 1rem;
+                font-weight: 800;
+                letter-spacing: 0.01em;
+                color: #0b3b69;
+            }
+
+            .stTabs [aria-selected="true"] {
+                background: linear-gradient(180deg, rgba(15,108,189,0.24) 0%, rgba(15,108,189,0.12) 100%);
+                border: 2px solid #0F6CBD;
+                box-shadow: 0 0 0 1px rgba(15,108,189,0.15), 0 8px 18px rgba(15, 108, 189, 0.18);
+                transform: translateY(-1px);
+            }
+
+            .stTabs [aria-selected="true"] p {
+                color: #083055;
+            }
+
+            .st-key-hm_celk_mes_hora,
+            .st-key-hm_celk_unidades_hora,
+            .st-key-hm_celk_metrica_hora {
+                margin-top: 0.08rem;
+            }
+
+            .st-key-hm_celk_mes_hora label p,
+            .st-key-hm_celk_unidades_hora label p,
+            .st-key-hm_celk_metrica_hora label p {
+                font-size: 0.70rem !important;
+                font-weight: 700 !important;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+                color: rgba(148, 163, 184, 0.88) !important;
+                margin-bottom: 0.22rem !important;
+            }
+
+            .st-key-hm_celk_mes_hora [data-baseweb="select"] > div,
+            .st-key-hm_celk_unidades_hora [data-baseweb="select"] > div,
+            .st-key-hm_celk_metrica_hora [data-baseweb="select"] > div {
+                min-height: 2.14rem;
+                border-radius: 12px;
+                border: 1px solid rgba(148, 163, 184, 0.24);
+                background: linear-gradient(180deg, rgba(15, 23, 42, 0.22) 0%, rgba(15, 23, 42, 0.15) 100%);
+                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 1px 3px rgba(15, 23, 42, 0.08);
+                transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+            }
+
+            .st-key-hm_celk_mes_hora [data-baseweb="select"] > div:focus-within,
+            .st-key-hm_celk_unidades_hora [data-baseweb="select"] > div:focus-within,
+            .st-key-hm_celk_metrica_hora [data-baseweb="select"] > div:focus-within {
+                border-color: rgba(56, 189, 248, 0.46);
+                box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.14);
+                background: linear-gradient(180deg, rgba(15, 23, 42, 0.28) 0%, rgba(15, 23, 42, 0.18) 100%);
+            }
+
+            .st-key-hm_celk_mes_hora [data-baseweb="select"] span,
+            .st-key-hm_celk_unidades_hora [data-baseweb="select"] span,
+            .st-key-hm_celk_metrica_hora [data-baseweb="select"] span {
+                font-size: 0.84rem !important;
+                color: rgba(226, 232, 240, 0.96) !important;
+            }
+
+            .st-key-hm_celk_unidades_hora [data-baseweb="tag"] {
+                height: 1.40rem;
+                border-radius: 999px;
+                padding: 0 0.34rem;
+                margin: 0.08rem 0.22rem 0.08rem 0;
+                border: 1px solid rgba(148, 163, 184, 0.28);
+                background: linear-gradient(180deg, rgba(241, 245, 249, 0.14) 0%, rgba(226, 232, 240, 0.08) 100%);
+                box-shadow: none;
+                transition: border-color 0.18s ease, background 0.18s ease;
+            }
+
+            .st-key-hm_celk_unidades_hora [data-baseweb="tag"]:hover {
+                border-color: rgba(148, 163, 184, 0.44);
+                background: linear-gradient(180deg, rgba(241, 245, 249, 0.20) 0%, rgba(226, 232, 240, 0.12) 100%);
+            }
+
+            .st-key-hm_celk_unidades_hora [data-baseweb="tag"] span {
+                font-size: 0.74rem !important;
+                font-weight: 600;
+                letter-spacing: 0.01em;
+                color: rgba(226, 232, 240, 0.94) !important;
+            }
+
+            .st-key-hm_celk_unidades_hora [data-baseweb="tag"] svg {
+                width: 12px;
+                height: 12px;
+                opacity: 0.60;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
         )
 
-        col_f1, col_f2, col_f3 = st.columns([2, 2, 1])
-        mes_hora = col_f1.selectbox(
-            "Mês",
-            ["Todos"] + meses_celk,
-            index=_idx_mes_default,  # mês com mais dados por padrão
-            key="hm_celk_mes_hora",
-        )
-        _upas_opcoes = unidades_celk if unidades_celk else ["UPA II Luziânia", "UPA I Jardim Ingá"]
-        unidades_hora = col_f2.multiselect(
-            "Unidades",
-            options=_upas_opcoes,
-            default=_upas_opcoes[:1],
-            key="hm_celk_unidades_hora",
-        )
-        metrica_hora = col_f3.selectbox(
-            "Métrica",
-            ["Média/dia", "Total", "Pacientes únicos"],
-            key="hm_celk_metrica_hora",
-        )
-
-        df_h = celk[celk["UNIDADE_PAINEL"].isin(unidades_hora)].copy()
-        if mes_hora != "Todos":
-            df_h = df_h[df_h["MES_LABEL"] == mes_hora]
-
-        if not unidades_hora:
-            st.warning("Selecione ao menos uma unidade.")
-        elif df_h.empty:
-            st.warning("Sem dados para o filtro selecionado.")
-        else:
-            # DEBUG: mostrar distribuição de dias da semana
-            with st.expander("🔍 DEBUG - Distribuição de dados por dia da semana"):
-                dow_counts = df_h["DIA_SEMANA"].value_counts()
-                st.write(f"**Registros por dia**: {dict(dow_counts.sort_index())}")
-                st.write(f"**Dias únicos presentes**: {sorted(dow_counts.index.tolist())}")
-                st.write(f"**Total de registros**: {len(df_h)}")
-            if metrica_hora == "Pacientes únicos":
-                raw = (
-                    df_h.groupby(["HORA", "DIA_SEMANA"])["PACIENTE"]
-                    .nunique()
-                    .reset_index()
-                    .pivot(index="HORA", columns="DIA_SEMANA", values="PACIENTE")
-                )
-                fmt_str = ".0f"
-            elif metrica_hora == "Média/dia":
-                # Conta dias únicos para calcular média por dia da semana
-                dias_por_dow = df_h.groupby("DIA_SEMANA")["DATA"].apply(lambda s: s.dt.date.nunique())
-                contagem = (
-                    df_h.groupby(["HORA", "DIA_SEMANA"])
-                    .size()
-                    .reset_index(name="QTD")
-                    .pivot(index="HORA", columns="DIA_SEMANA", values="QTD")
-                )
-                raw = contagem.div(dias_por_dow).round(1)
-                fmt_str = ".1f"
-            else:  # Total
-                raw = (
-                    df_h.groupby(["HORA", "DIA_SEMANA"])
-                    .size()
-                    .reset_index(name="QTD")
-                    .pivot(index="HORA", columns="DIA_SEMANA", values="QTD")
-                )
-                fmt_str = ".0f"
-
-            # Garante ordem dos dias e horas (reindex full para sempre mostrar 7 colunas)
-            raw = raw.reindex(columns=_DOW_ORDER)
-            raw = raw.reindex(sorted(raw.index))
-
-            # Adiciona linha TOTAL
-            total_row = raw.sum(axis=0)
-            pivot_hora = pd.concat([raw, total_row.rename("TOTAL").to_frame().T])
-
-            # Rótulos de hora estilo "08:00 às 08:59"
-            hora_labels = [
-                f"{int(h):02d}:00 às {int(h):02d}:59" if h != "TOTAL" else "TOTAL"
-                for h in pivot_hora.index
-            ]
-            pivot_hora.index = hora_labels
-            pivot_hora.index.name = "Hora"
-            pivot_hora.columns.name = "Dia da Semana"
-
-            _lbl_upas = ", ".join(unidades_hora) if len(unidades_hora) <= 2 else f"{len(unidades_hora)} unidades"
-            titulo = f"UPAs ({_lbl_upas}) — {metrica_hora} por Hora × Dia da Semana"
-            if mes_hora != "Todos":
-                titulo += f"  ({mes_hora})"
-
-            fig = _heatmap_fig(pivot_hora, titulo, "Dia da Semana", "Hora do Dia", height=700, fmt=fmt_str)
-            st.plotly_chart(fig, use_container_width=True)
-
-            # KPIs de pico (exclui linha TOTAL)
-            pivot_sem_total = pivot_hora.drop("TOTAL", errors="ignore")
-            k1, k2, k3, k4 = st.columns(4)
-            pico_hora_lbl = pivot_sem_total.sum(axis=1).idxmax()
-            pico_dia_lbl = pivot_sem_total.sum(axis=0).idxmax()
-            total_atend = int(raw.sum().sum())
-            media_hora = round(raw.sum(axis=1).mean(), 1)
-            k1.metric("🔺 Hora de pico", pico_hora_lbl)
-            k2.metric("📅 Dia de pico", pico_dia_lbl)
-            k3.metric("🔢 Total no período", f"{total_atend:,}")
-            k4.metric("⌀ Média/hora", f"{media_hora:,.1f}")
-
-        section_end()
-
-    # ════════════════════════════════════════════════════════════════════
-    # SEÇÃO 2 — Calendário diário (Semana × Dia da Semana)  (CELK)
-    # ════════════════════════════════════════════════════════════════════
-    # SEÇÕES 1b/1c/1d — Atenção Básica · Secundária · Odontologia
-    # ════════════════════════════════════════════════════════════════════
-    if has_celk:
         _grupos_cfg = [
             ("Atenção Básica",     "💊", "hm_bas",   True),
             ("Atenção Secundária", "🏨", "hm_sec",   False),
             ("Odontologia",        "🦷", "hm_odont", False),
         ]
+        _grupos_disponiveis = []
         for _gnome, _gicon, _gpfx, _default_one in _grupos_cfg:
             _gunids = sorted(
                 celk[celk["GRUPO_PAINEL"] == _gnome]["UNIDADE_PAINEL"].dropna().unique().tolist()
             )
-            if not _gunids:
-                continue
+            if _gunids:
+                _grupos_disponiveis.append((_gnome, _gicon, _gpfx, _default_one, _gunids))
 
+        _tab_labels = ["🔥 Mapa de Calor — Hora × Dia da Semana"]
+        _tab_labels.extend([f"{_gicon} {_gnome}" for _gnome, _gicon, _, _, _ in _grupos_disponiveis])
+        _tabs = st.tabs(_tab_labels)
+        tab_fluxo_horario = _tabs[0]
+        with tab_fluxo_horario:
             section_start(
-                f"{_gicon} {_gnome} — Hora × Dia da Semana",
-                "Concentração de atendimentos por hora do dia e dia da semana "
-                "(cada célula = total ou média dos registros no período selecionado)"
+                "",
+                "<strong>🕐 Heatmap de Fluxo Horário — Hora × Dia da Semana</strong>"
             )
 
-            _gc1, _gc2, _gc3 = st.columns([2, 3, 1])
-            _gmes = _gc1.selectbox(
-                "Mês", ["Todos"] + meses_celk,
-                index=_idx_mes_default,
-                key=f"{_gpfx}_mes",
-            )
-            _gsel = _gc2.multiselect(
-                "Unidades",
-                options=_gunids,
-                default=_gunids[:1] if _default_one else _gunids,
-                key=f"{_gpfx}_unidades",
-            )
-            _gmet = _gc3.selectbox(
-                "Métrica",
-                ["Média/dia", "Total", "Pacientes únicos"],
-                key=f"{_gpfx}_metrica",
-            )
-
-            _gdf = celk[celk["GRUPO_PAINEL"] == _gnome].copy()
-            if _gmes != "Todos":
-                _gdf = _gdf[_gdf["MES_LABEL"] == _gmes]
-            if _gsel:
-                _gdf = _gdf[_gdf["UNIDADE_PAINEL"].isin(_gsel)]
-
-            if _gdf.empty or not _gsel:
-                st.warning("Selecione ao menos uma unidade.")
-            else:
-                if _gmet == "Pacientes únicos":
-                    _graw = (
-                        _gdf.groupby(["HORA", "DIA_SEMANA"])["PACIENTE"]
-                        .nunique().reset_index()
-                        .pivot(index="HORA", columns="DIA_SEMANA", values="PACIENTE")
-                    )
-                    _gfmt = ".0f"
-                elif _gmet == "Média/dia":
-                    _gdias = _gdf.groupby("DIA_SEMANA")["DATA"].apply(lambda s: s.dt.date.nunique())
-                    _gcnt = (
-                        _gdf.groupby(["HORA", "DIA_SEMANA"])
-                        .size().reset_index(name="QTD")
-                        .pivot(index="HORA", columns="DIA_SEMANA", values="QTD")
-                    )
-                    _graw = _gcnt.div(_gdias).round(1)
-                    _gfmt = ".1f"
-                else:
-                    _graw = (
-                        _gdf.groupby(["HORA", "DIA_SEMANA"])
-                        .size().reset_index(name="QTD")
-                        .pivot(index="HORA", columns="DIA_SEMANA", values="QTD")
-                    )
-                    _gfmt = ".0f"
-
-                _graw = _graw.reindex(columns=_DOW_ORDER).reindex(sorted(_graw.index))
-                _gpivot = pd.concat([_graw, _graw.sum(axis=0).rename("TOTAL").to_frame().T])
-                _gpivot.index = [
-                    f"{int(h):02d}:00 às {int(h):02d}:59" if h != "TOTAL" else "TOTAL"
-                    for h in _gpivot.index
-                ]
-                _gpivot.index.name = "Hora"
-                _gpivot.columns.name = "Dia da Semana"
-
-                _glbl = ", ".join(_gsel) if len(_gsel) <= 2 else f"{len(_gsel)} unidades"
-                _gtit = f"{_gnome} ({_glbl}) — {_gmet} por Hora × Dia da Semana"
-                if _gmes != "Todos":
-                    _gtit += f"  ({_gmes})"
-
-                st.plotly_chart(
-                    _heatmap_fig(_gpivot, _gtit, "Dia da Semana", "Hora do Dia", height=700, fmt=_gfmt),
-                    use_container_width=True,
+            with st.expander("Filtros", expanded=False):
+                col_f1, col_f2, col_f3 = st.columns([1.6, 2.4, 1.2])
+                mes_hora = col_f1.selectbox(
+                    "Mês",
+                    ["Todos"] + meses_celk,
+                    index=_idx_mes_default,  # mês com mais dados por padrão
+                    key="hm_celk_mes_hora",
+                )
+                _upas_opcoes = unidades_celk if unidades_celk else []
+                unidades_hora = col_f2.multiselect(
+                    "Unidades",
+                    options=_upas_opcoes,
+                    default=_upas_opcoes[:1],
+                    key="hm_celk_unidades_hora",
+                )
+                metrica_hora = col_f3.selectbox(
+                    "Métrica",
+                    ["Média/dia", "Total", "Pacientes únicos"],
+                    key="hm_celk_metrica_hora",
                 )
 
-                _gpnt = _gpivot.drop("TOTAL", errors="ignore")
-                _gk1, _gk2, _gk3, _gk4 = st.columns(4)
-                _gk1.metric("🔺 Hora de pico",    _gpnt.sum(axis=1).idxmax())
-                _gk2.metric("📅 Dia de pico",      _gpnt.sum(axis=0).idxmax())
-                _gk3.metric("🔢 Total no período", f"{int(_graw.sum().sum()):,}")
-                _gk4.metric("⌀ Média/hora",        f"{round(_graw.sum(axis=1).mean(), 1):,.1f}")
+            df_h = celk[celk["UNIDADE_PAINEL"].isin(unidades_hora)].copy()
+            if mes_hora != "Todos":
+                df_h = df_h[df_h["MES_LABEL"] == mes_hora]
+
+            if not unidades_hora:
+                st.warning("Selecione ao menos uma unidade.")
+            elif df_h.empty:
+                st.warning("Sem dados para o filtro selecionado.")
+            else:
+                if metrica_hora == "Pacientes únicos":
+                    raw = (
+                        df_h.groupby(["HORA", "DIA_SEMANA"])["PACIENTE"]
+                        .nunique()
+                        .reset_index()
+                        .pivot(index="HORA", columns="DIA_SEMANA", values="PACIENTE")
+                    )
+                    fmt_str = ".0f"
+                elif metrica_hora == "Média/dia":
+                    dias_por_dow = df_h.groupby("DIA_SEMANA")["DATA"].apply(lambda s: s.dt.date.nunique())
+                    contagem = (
+                        df_h.groupby(["HORA", "DIA_SEMANA"])
+                        .size()
+                        .reset_index(name="QTD")
+                        .pivot(index="HORA", columns="DIA_SEMANA", values="QTD")
+                    )
+                    raw = contagem.div(dias_por_dow).round(1)
+                    fmt_str = ".1f"
+                else:
+                    raw = (
+                        df_h.groupby(["HORA", "DIA_SEMANA"])
+                        .size()
+                        .reset_index(name="QTD")
+                        .pivot(index="HORA", columns="DIA_SEMANA", values="QTD")
+                    )
+                    fmt_str = ".0f"
+
+                raw = raw.reindex(columns=_DOW_ORDER)
+                raw = raw.reindex(sorted(raw.index))
+
+                total_row = raw.sum(axis=0)
+                pivot_hora = pd.concat([raw, total_row.rename("TOTAL").to_frame().T])
+
+                hora_labels = [
+                    f"{int(h):02d}:00 às {int(h):02d}:59" if h != "TOTAL" else "TOTAL"
+                    for h in pivot_hora.index
+                ]
+                pivot_hora.index = hora_labels
+                pivot_hora.index.name = "Hora"
+                pivot_hora.columns.name = "Dia da Semana"
+
+                _lbl_upas = ", ".join(unidades_hora) if len(unidades_hora) <= 2 else f"{len(unidades_hora)} unidades"
+                titulo = f"UPAs ({_lbl_upas}) — {metrica_hora} por Hora × Dia da Semana"
+                if mes_hora != "Todos":
+                    titulo += f"  ({mes_hora})"
+
+                fig = _heatmap_fig(pivot_hora, titulo, "Dia da Semana", "Hora do Dia", height=700, fmt=fmt_str)
+                st.plotly_chart(fig, use_container_width=True)
+
+                pivot_sem_total = pivot_hora.drop("TOTAL", errors="ignore")
+                k1, k2, k3, k4 = st.columns(4)
+                pico_hora_lbl = pivot_sem_total.sum(axis=1).idxmax()
+                pico_dia_lbl = pivot_sem_total.sum(axis=0).idxmax()
+                total_atend = int(raw.sum().sum())
+                media_hora = round(raw.sum(axis=1).mean(), 1)
+                k1.metric("🔺 Hora de pico", pico_hora_lbl)
+                k2.metric("📅 Dia de pico", pico_dia_lbl)
+                k3.metric("🔢 Total no período", f"{total_atend:,}")
+                k4.metric("⌀ Média/hora", f"{media_hora:,.1f}")
 
             section_end()
+
+        for _tab, (_gnome, _gicon, _gpfx, _default_one, _gunids) in zip(_tabs[1:], _grupos_disponiveis):
+            with _tab:
+                _gc1, _gc2, _gc3 = st.columns([2, 3, 1])
+                _gmes = _gc1.selectbox(
+                    "Mês", ["Todos"] + meses_celk,
+                    index=_idx_mes_default,
+                    key=f"{_gpfx}_mes",
+                )
+                _gsel = _gc2.multiselect(
+                    "Unidades",
+                    options=_gunids,
+                    default=_gunids[:1] if _default_one else _gunids,
+                    key=f"{_gpfx}_unidades",
+                )
+                _gmet = _gc3.selectbox(
+                    "Métrica",
+                    ["Média/dia", "Total", "Pacientes únicos"],
+                    key=f"{_gpfx}_metrica",
+                )
+
+                _gdf = celk[celk["GRUPO_PAINEL"] == _gnome].copy()
+                if _gmes != "Todos":
+                    _gdf = _gdf[_gdf["MES_LABEL"] == _gmes]
+                if _gsel:
+                    _gdf = _gdf[_gdf["UNIDADE_PAINEL"].isin(_gsel)]
+
+                if _gdf.empty or not _gsel:
+                    st.warning("Selecione ao menos uma unidade.")
+                else:
+                    if _gmet == "Pacientes únicos":
+                        _graw = (
+                            _gdf.groupby(["HORA", "DIA_SEMANA"])["PACIENTE"]
+                            .nunique().reset_index()
+                            .pivot(index="HORA", columns="DIA_SEMANA", values="PACIENTE")
+                        )
+                        _gfmt = ".0f"
+                    elif _gmet == "Média/dia":
+                        _gdias = _gdf.groupby("DIA_SEMANA")["DATA"].apply(lambda s: s.dt.date.nunique())
+                        _gcnt = (
+                            _gdf.groupby(["HORA", "DIA_SEMANA"])
+                            .size().reset_index(name="QTD")
+                            .pivot(index="HORA", columns="DIA_SEMANA", values="QTD")
+                        )
+                        _graw = _gcnt.div(_gdias).round(1)
+                        _gfmt = ".1f"
+                    else:
+                        _graw = (
+                            _gdf.groupby(["HORA", "DIA_SEMANA"])
+                            .size().reset_index(name="QTD")
+                            .pivot(index="HORA", columns="DIA_SEMANA", values="QTD")
+                        )
+                        _gfmt = ".0f"
+
+                    _graw = _graw.reindex(columns=_DOW_ORDER).reindex(sorted(_graw.index))
+                    _gpivot = pd.concat([_graw, _graw.sum(axis=0).rename("TOTAL").to_frame().T])
+                    _gpivot.index = [
+                        f"{int(h):02d}:00 às {int(h):02d}:59" if h != "TOTAL" else "TOTAL"
+                        for h in _gpivot.index
+                    ]
+                    _gpivot.index.name = "Hora"
+                    _gpivot.columns.name = "Dia da Semana"
+
+                    _glbl = ", ".join(_gsel) if len(_gsel) <= 2 else f"{len(_gsel)} unidades"
+                    _gtit = f"{_gnome} ({_glbl}) — {_gmet} por Hora × Dia da Semana"
+                    if _gmes != "Todos":
+                        _gtit += f"  ({_gmes})"
+
+                    st.plotly_chart(
+                        _heatmap_fig(_gpivot, _gtit, "Dia da Semana", "Hora do Dia", height=700, fmt=_gfmt),
+                        use_container_width=True,
+                    )
+
+                    _gpnt = _gpivot.drop("TOTAL", errors="ignore")
+                    _gk1, _gk2, _gk3, _gk4 = st.columns(4)
+                    _gk1.metric("🔺 Hora de pico",    _gpnt.sum(axis=1).idxmax())
+                    _gk2.metric("📅 Dia de pico",      _gpnt.sum(axis=0).idxmax())
+                    _gk3.metric("🔢 Total no período", f"{int(_graw.sum().sum()):,}")
+                    _gk4.metric("⌀ Média/hora",        f"{round(_graw.sum(axis=1).mean(), 1):,.1f}")
+
 
     # ════════════════════════════════════════════════════════════════════
     # SEÇÃO 2 — Calendário diário (Semana × Dia da Semana)  (CELK)
@@ -4956,7 +6507,12 @@ def render_heatmap_page():
 
         col_c1, col_c2 = st.columns([2, 2])
         mes_cal = col_c1.selectbox("Mês", meses_celk, index=len(meses_celk) - 1, key="hm_celk_mes_cal")
-        unidade_cal = col_c2.selectbox("Unidade", unidades_celk if unidades_celk else ["UPA II Luziânia", "UPA I Jardim Ingá"], key="hm_celk_unidade_cal")
+        if not unidades_celk:
+            st.warning("Sem unidades UPA mapeadas para exibir o calendário mensal.")
+            section_end()
+            return
+
+        unidade_cal = col_c2.selectbox("Unidade", unidades_celk, key="hm_celk_unidade_cal")
 
         df_cal = celk[(celk["UNIDADE_PAINEL"] == unidade_cal) & (celk["MES_LABEL"] == mes_cal)].copy()
 
@@ -4983,125 +6539,1695 @@ def render_heatmap_page():
 
         section_end()
 
-    # ════════════════════════════════════════════════════════════════════
-    # SEÇÃO 3 — Padrão semanal por mês  (CELK ou KPI agregado)
-    # ════════════════════════════════════════════════════════════════════
-    section_start(
-        "📊 Padrão Semanal por Mês",
-        "Média de atendimentos por dia da semana em cada mês "
-        "— revela tendências persistentes (dia mais movimentado)"
+
+def render_mapa_territorial_page(file_bytes=None, _mtime=None):
+    st.markdown(
+        """
+        <style>
+        .territorial-wrap {
+            background:
+                radial-gradient(1200px 420px at 0% 0%, rgba(14, 116, 144, 0.10), rgba(14, 116, 144, 0.00) 60%),
+                radial-gradient(1000px 360px at 100% 0%, rgba(30, 64, 175, 0.08), rgba(30, 64, 175, 0.00) 62%);
+            border-radius: 24px;
+            padding: 0.4rem 0.3rem 0.8rem 0.3rem;
+        }
+
+        .territorial-wrap .section-card--territorial {
+            background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
+            border: 1px solid #E2E8F0;
+            border-radius: 20px;
+            padding: 1.0rem 1.05rem 1.05rem 1.05rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .territorial-wrap .section-card--territorial::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #0EA5E9 0%, #22C55E 48%, #F59E0B 100%);
+            opacity: 0.82;
+        }
+
+        .territorial-wrap .section-card--territorial .section-title {
+            font-size: 1.14rem;
+            font-weight: 800;
+            letter-spacing: -0.35px;
+            color: #0B1F33;
+            margin-bottom: 0.22rem;
+            line-height: 1.2;
+        }
+
+        .territorial-wrap .section-card--territorial .section-subtitle {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: #64748B;
+            margin-bottom: 0.95rem;
+            line-height: 1.35;
+        }
+
+        .territorial-wrap .section-card--territorial [data-testid="stDataFrame"],
+        .territorial-wrap .section-card--territorial .stPlotlyChart,
+        .territorial-wrap .section-card--territorial iframe {
+            border-radius: 16px !important;
+            overflow: hidden;
+            border: 1px solid #E5EAF1;
+            box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+            background: #FFFFFF;
+        }
+
+        .territorial-wrap .section-card--territorial [data-testid="stCaptionContainer"] p {
+            color: #6B7280 !important;
+            font-size: 0.80rem !important;
+        }
+
+        .territorial-wrap .mt-control-card {
+            border: 1px solid #E6ECF3;
+            border-radius: 12px;
+            background: linear-gradient(180deg, #FBFDFF 0%, #F6F9FC 100%);
+            padding: 0.55rem 0.7rem 0.45rem 0.7rem;
+            margin-bottom: 0.45rem;
+        }
+
+        .territorial-wrap .mt-control-title {
+            font-size: 0.76rem;
+            font-weight: 700;
+            letter-spacing: 0.3px;
+            text-transform: uppercase;
+            color: #334155;
+            margin-bottom: 0.15rem;
+        }
+
+        .territorial-wrap .mt-control-sub {
+            font-size: 0.72rem;
+            color: #64748B;
+            line-height: 1.28;
+        }
+
+        .territorial-wrap .streamlit-expanderHeader {
+            border: 1px solid #E6ECF3 !important;
+            border-radius: 10px !important;
+            background: linear-gradient(180deg, #F8FAFC 0%, #F1F5F9 100%) !important;
+            color: #334155 !important;
+            font-size: 0.8rem !important;
+            font-weight: 700 !important;
+            padding-top: 0.22rem !important;
+            padding-bottom: 0.22rem !important;
+        }
+
+        .territorial-wrap .section-card--territorial [data-testid="stMultiSelect"] label,
+        .territorial-wrap .section-card--territorial [data-testid="stSelectbox"] label,
+        .territorial-wrap .section-card--territorial [data-testid="stSlider"] label,
+        .territorial-wrap .section-card--territorial [data-testid="stCheckbox"] label {
+            color: #64748B !important;
+            font-size: 0.76rem !important;
+            font-weight: 600 !important;
+            letter-spacing: 0.1px;
+            margin-bottom: 0.24rem !important;
+        }
+
+        .territorial-wrap .section-card--territorial [data-testid="stMultiSelect"] > div > div,
+        .territorial-wrap .section-card--territorial [data-testid="stSelectbox"] > div > div {
+            border-radius: 10px !important;
+            border: 1px solid #E6ECF3 !important;
+            background: linear-gradient(180deg, #F8FAFC 0%, #F1F5F9 100%) !important;
+            min-height: 2.25rem !important;
+            box-shadow: none !important;
+            transition: border-color 0.18s ease, background 0.18s ease;
+        }
+
+        .territorial-wrap .section-card--territorial [data-testid="stMultiSelect"] > div > div:hover,
+        .territorial-wrap .section-card--territorial [data-testid="stSelectbox"] > div > div:hover {
+            border-color: #CBD5E1 !important;
+            background: linear-gradient(180deg, #F8FAFC 0%, #EEF2F7 100%) !important;
+        }
+
+        .territorial-wrap .section-card--territorial [data-testid="stMultiSelect"] > div > div:focus-within,
+        .territorial-wrap .section-card--territorial [data-testid="stSelectbox"] > div > div:focus-within {
+            border-color: #94A3B8 !important;
+            box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.14) !important;
+            background: #F8FAFC !important;
+        }
+
+        .territorial-wrap .section-card--territorial [data-testid="stMultiSelect"] [data-baseweb="tag"] {
+            border-radius: 7px !important;
+            border: 1px solid #D8E1EA !important;
+            background: #EEF3F8 !important;
+            color: #334155 !important;
+            font-size: 0.72rem !important;
+            font-weight: 600 !important;
+            padding: 1px 6px !important;
+        }
+
+        .territorial-wrap .section-card--territorial [data-testid="stSlider"] > div {
+            border-radius: 10px;
+            border: 1px solid #E6ECF3;
+            background: linear-gradient(180deg, #F8FAFC 0%, #F1F5F9 100%);
+            padding: 0.42rem 0.56rem 0.2rem 0.56rem;
+        }
+
+        .territorial-wrap .section-card--territorial [data-testid="stSlider"] p {
+            font-size: 0.73rem !important;
+            color: #64748B !important;
+        }
+
+        .territorial-wrap .section-card--territorial [data-testid="stSlider"] [data-baseweb="slider"] div[role="slider"] {
+            box-shadow: 0 0 0 1px #94A3B8;
+            background: #FFFFFF !important;
+            width: 12px !important;
+            height: 12px !important;
+            margin-top: -2px !important;
+        }
+
+        .territorial-wrap .section-card--territorial [data-testid="stSlider"] [data-baseweb="slider"] > div > div:nth-child(1) {
+            background: #CBD5E1 !important;
+            height: 0.16rem !important;
+        }
+
+        .territorial-wrap .section-card--territorial [data-testid="stSlider"] [data-baseweb="slider"] > div > div:nth-child(2) {
+            background: #94A3B8 !important;
+            height: 0.16rem !important;
+        }
+
+        .territorial-wrap .section-card--territorial [data-testid="stCheckbox"] {
+            border-radius: 10px;
+            border: 1px solid #E6ECF3;
+            background: linear-gradient(180deg, #F8FAFC 0%, #F1F5F9 100%);
+            padding: 0.45rem 0.6rem;
+        }
+
+        .territorial-wrap .section-card--territorial [data-testid="stCheckbox"] label p {
+            color: #475569 !important;
+            font-size: 0.78rem !important;
+            line-height: 1.28 !important;
+        }
+
+        .territorial-wrap .section-card--territorial [data-testid="stMultiSelect"],
+        .territorial-wrap .section-card--territorial [data-testid="stSelectbox"],
+        .territorial-wrap .section-card--territorial [data-testid="stSlider"],
+        .territorial-wrap .section-card--territorial [data-testid="stCheckbox"] {
+            margin-bottom: 0.38rem;
+        }
+
+        .territorial-wrap .section-card--territorial [data-baseweb="button-group"] {
+            gap: 0.34rem;
+            flex-wrap: wrap;
+        }
+
+        .territorial-wrap .section-card--territorial [data-baseweb="button-group"] button {
+            border-radius: 999px !important;
+            border: 1px solid #D7E1EB !important;
+            background: #F3F7FB !important;
+            color: #475569 !important;
+            min-height: 1.95rem !important;
+            padding: 0.18rem 0.72rem !important;
+            font-size: 0.74rem !important;
+            font-weight: 700 !important;
+            box-shadow: none !important;
+            transition: all 0.18s ease;
+        }
+
+        .territorial-wrap .section-card--territorial [data-baseweb="button-group"] button:hover {
+            border-color: #AFC3D8 !important;
+            background: #EAF1F8 !important;
+            color: #334155 !important;
+        }
+
+        .territorial-wrap .section-card--territorial [data-baseweb="button-group"] button[aria-pressed="true"] {
+            border-color: #7FA6CC !important;
+            background: linear-gradient(180deg, #DCEAF7 0%, #D2E4F5 100%) !important;
+            color: #1E3A5F !important;
+        }
+
+        .territorial-wrap .section-card--territorial [data-baseweb="tab-list"] {
+            gap: 0.45rem;
+            background: linear-gradient(180deg, #F8FAFC 0%, #EEF3F8 100%);
+            border: 1px solid #DCE6F1;
+            border-radius: 14px;
+            padding: 0.35rem;
+            margin-bottom: 0.85rem;
+        }
+
+        .territorial-wrap .section-card--territorial [data-baseweb="tab-list"] button {
+            border-radius: 10px !important;
+            border: 1px solid transparent !important;
+            background: transparent !important;
+            color: #475569 !important;
+            font-size: 0.86rem !important;
+            font-weight: 800 !important;
+            letter-spacing: 0.1px;
+            min-height: 2.2rem !important;
+            padding: 0.22rem 0.8rem !important;
+            transition: all 0.18s ease;
+        }
+
+        .territorial-wrap .section-card--territorial [data-baseweb="tab-list"] button:hover {
+            background: #E8F0F8 !important;
+            border-color: #C8D8EA !important;
+            color: #1E3A5F !important;
+        }
+
+        .territorial-wrap .section-card--territorial [data-baseweb="tab-list"] button[aria-selected="true"] {
+            background: linear-gradient(180deg, #DBECFB 0%, #D3E7F8 100%) !important;
+            border-color: #A7C4E3 !important;
+            color: #0F2F55 !important;
+            box-shadow: 0 6px 14px rgba(30, 64, 175, 0.10);
+        }
+
+        .territorial-wrap .mt-tab-highlight {
+            border: 1px solid #D6E3F2;
+            border-radius: 12px;
+            background: linear-gradient(120deg, rgba(14,165,233,0.08) 0%, rgba(59,130,246,0.05) 48%, rgba(34,197,94,0.06) 100%);
+            padding: 0.55rem 0.7rem;
+            margin-bottom: 0.55rem;
+        }
+
+        .territorial-wrap .mt-tab-highlight-title {
+            font-size: 0.78rem;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 0.32px;
+            color: #1E3A5F;
+            margin-bottom: 0.1rem;
+        }
+
+        .territorial-wrap .mt-tab-highlight-sub {
+            font-size: 0.76rem;
+            font-weight: 600;
+            color: #475569;
+            line-height: 1.25;
+        }
+        </style>
+        <div class="territorial-wrap">
+        """,
+        unsafe_allow_html=True,
     )
 
-    if has_celk and unidades_celk:
-        tabs_b = st.tabs(unidades_celk)
-        for tab, unid in zip(tabs_b, unidades_celk):
-            with tab:
-                sub = celk[celk["UNIDADE_PAINEL"] == unid].copy()
-                if sub.empty:
-                    st.info("Sem dados.")
-                    continue
-                # Calcula média de atendimentos por dia da semana em cada mês
-                # (divide total de atendimentos pelo nº de dias daquele dia-da-semana no mês)
-                dias_unicos = (
-                    sub.groupby(["MES_LABEL", "DIA_SEMANA"])["DATA"]
-                    .apply(lambda s: s.dt.date.nunique())
-                    .reset_index(name="N_DIAS")
-                )
-                contagem_b = (
-                    sub.groupby(["MES_LABEL", "DIA_SEMANA"])
-                    .size()
-                    .reset_index(name="QTD")
-                )
-                merged_b = contagem_b.merge(dias_unicos, on=["MES_LABEL", "DIA_SEMANA"])
-                merged_b["MEDIA"] = (merged_b["QTD"] / merged_b["N_DIAS"]).round(1)
-                pivot_b = merged_b.pivot(index="MES_LABEL", columns="DIA_SEMANA", values="MEDIA")
-                pivot_b = pivot_b.reindex(columns=[d for d in _DOW_ORDER if d in pivot_b.columns])
-                pivot_b = pivot_b.reindex([m for m in meses_celk if m in pivot_b.index])
-                fig_b = _heatmap_fig(
-                    pivot_b,
-                    f"{unid} — Média de Atendimentos por Dia da Semana × Mês",
-                    "Dia da Semana", "Mês",
-                    fmt=".1f",
-                )
-                st.plotly_chart(fig_b, use_container_width=True)
+    def territorial_heading(title):
+        st.markdown(
+            f"""
+            <div style=\"margin: 8px 0 12px 0; font-size: 20px; font-weight: 900; letter-spacing: 0.2px; color: #0B1220; line-height: 1.2;\">{title}</div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    section_start("", "", theme="territorial")
+
+    geo_df, ranking_df, colab_df, erros = load_mapa_territorial_data(file_bytes=file_bytes, _mtime=_mtime)
+
+    if erros:
+        for err in erros:
+            st.warning(err)
+        section_end()
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    if geo_df.empty:
+        st.warning("Sem dados suficientes para renderizar o mapa territorial.")
+        section_end()
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    section_start("", "", theme="territorial")
+    tipos = sorted(geo_df["tipo"].dropna().unique().tolist())
+    filtro_col_left, filtro_col_right = st.columns([0.72, 0.28])
+    with filtro_col_right:
+        st.markdown(
+            """
+            <div class="mt-control-card">
+                <div class="mt-control-title" style="font-size:14px; font-weight:600;">Tipo de Unidade</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        try:
+            tipos_sel = st.segmented_control(
+                "Tipo de unidade",
+                options=tipos,
+                default=tipos,
+                selection_mode="multi",
+                key="mt_tipo_unidade",
+                label_visibility="collapsed",
+            )
+        except Exception:
+            tipos_sel = st.multiselect(
+                "Tipo de unidade",
+                options=tipos,
+                default=tipos,
+                key="mt_tipo_unidade",
+                label_visibility="collapsed",
+            )
+
+    if tipos_sel is None:
+        tipos_sel = []
+    elif isinstance(tipos_sel, str):
+        tipos_sel = [tipos_sel]
     else:
-        # Fallback KPI agregado (dados pré-existentes)
-        prod = load_produtividade_data(_mtime=_samu_file_mtime())
-        kpi_geral = prod.get("kpi_diario", pd.DataFrame())
-        if kpi_geral.empty:
-            st.info("Sem dados disponíveis.")
-        else:
-            dg = kpi_geral.copy()
-            dg["Data"] = pd.to_datetime(dg["Data"], errors="coerce")
-            dg = dg.dropna(subset=["Data"])
-            _dow_map_f = {0: "Segunda", 1: "Terça", 2: "Quarta", 3: "Quinta", 4: "Sexta", 5: "Sábado", 6: "Domingo"}
-            dg["DIA_SEMANA"] = dg["Data"].dt.dayofweek.map(_dow_map_f)
-            dg["MES_LABEL"] = dg["Data"].dt.to_period("M").dt.strftime("%b/%y").str.capitalize()
-            meses_f = sorted(dg["MES_LABEL"].dropna().unique().tolist())
-            col_u2 = next((c for c in dg.columns if "luzi" in c.lower()), None)
-            col_u1 = next((c for c in dg.columns if "jardim" in c.lower()), None)
-            unidades_f = {}
-            if col_u2: unidades_f["UPA II Luziânia"] = col_u2
-            if col_u1: unidades_f["UPA I Jardim Ingá"] = col_u1
-            tabs_fb = st.tabs(list(unidades_f.keys())) if unidades_f else []
-            for tab, (label, col_val) in zip(tabs_fb, unidades_f.items()):
-                with tab:
-                    dg[col_val] = pd.to_numeric(dg[col_val], errors="coerce")
-                    pivot_fb = dg.groupby(["MES_LABEL", "DIA_SEMANA"])[col_val].mean().reset_index().pivot(
-                        index="MES_LABEL", columns="DIA_SEMANA", values=col_val
-                    )
-                    pivot_fb = pivot_fb.reindex(columns=[d for d in _DOW_ORDER if d in pivot_fb.columns])
-                    pivot_fb = pivot_fb.reindex([m for m in meses_f if m in pivot_fb.index])
-                    fig_fb = _heatmap_fig(pivot_fb, f"{label} — Média/dia da semana × Mês", "Dia da Semana", "Mês", fmt=".1f")
-                    st.plotly_chart(fig_fb, use_container_width=True)
+        tipos_sel = list(tipos_sel)
 
     section_end()
 
-    # ════════════════════════════════════════════════════════════════════
-    # SEÇÃO 4 — Turno (Diurno × Noturno) via CELK  (hora 07–19 = diurno)
-    # ════════════════════════════════════════════════════════════════════
-    if has_celk:
-        section_start(
-            "🌓 Turno × Dia (Diurno / Noturno)",
-            "Atendimentos por turno ao longo dos dias do mês "
-            "(Diurno: 07h–18h59 | Noturno: 19h–06h59)"
+    mapa_df = geo_df[geo_df["tipo"].isin(tipos_sel)].copy() if tipos_sel else geo_df.iloc[0:0].copy()
+    ranking_df_filtrado = ranking_df[ranking_df["tipo"].isin(tipos_sel)].copy() if tipos_sel else ranking_df.iloc[0:0].copy()
+    if mapa_df.empty:
+        st.info("Nenhuma unidade encontrada para o filtro selecionado.")
+        section_end()
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    min_colab = int(mapa_df["qtd_colaboradores"].min())
+    max_colab = int(mapa_df["qtd_colaboradores"].max())
+
+    def territorial_help_badge(help_text):
+        return (
+            '<span title="' + html.escape(help_text, quote=True) + '" '
+            'style="cursor:help; margin-left:4px; color:#334155; font-weight:700;">&#9432;</span>'
         )
 
-        col_t1, col_t2 = st.columns([2, 2])
-        mes_turno = col_t1.selectbox("Mês", meses_celk, index=len(meses_celk) - 1, key="hm_celk_mes_turno")
-        unidade_turno = col_t2.selectbox("Unidade", unidades_celk if unidades_celk else ["UPA II Luziânia"], key="hm_celk_unidade_turno")
+    def territorial_info_line(label, help_text):
+        # Mantido como no-op para deixar a página mais limpa, exibindo só os títulos principais.
+        return
 
-        df_t = celk[(celk["UNIDADE_PAINEL"] == unidade_turno) & (celk["MES_LABEL"] == mes_turno)].copy()
-        if df_t.empty:
-            st.warning("Sem dados para o filtro selecionado.")
+    def add_map_lock_control(map_obj, initially_locked=True):
+        map_var = map_obj.get_name()
+        script = f"""
+        <script>
+        (function() {{
+            function boot(attempt) {{
+                var map = window['{map_var}'];
+                if (!map) {{
+                    if (attempt < 24) setTimeout(function() {{ boot(attempt + 1); }}, 120);
+                    return;
+                }}
+
+                var locked = {str(True if initially_locked else False).lower()};
+                var buttonRef = null;
+
+                function applyLockState() {{
+                    if (locked) {{
+                        if (map.dragging) map.dragging.disable();
+                        if (map.touchZoom) map.touchZoom.disable();
+                        if (map.doubleClickZoom) map.doubleClickZoom.disable();
+                        if (map.scrollWheelZoom) map.scrollWheelZoom.disable();
+                        if (map.boxZoom) map.boxZoom.disable();
+                        if (map.keyboard) map.keyboard.disable();
+                        if (map.tap) map.tap.disable();
+                    }} else {{
+                        if (map.dragging) map.dragging.enable();
+                        if (map.touchZoom) map.touchZoom.enable();
+                        if (map.doubleClickZoom) map.doubleClickZoom.enable();
+                        if (map.scrollWheelZoom) map.scrollWheelZoom.enable();
+                        if (map.boxZoom) map.boxZoom.enable();
+                        if (map.keyboard) map.keyboard.enable();
+                        if (map.tap) map.tap.enable();
+                    }}
+
+                    if (buttonRef) {{
+                        buttonRef.innerHTML = locked ? '🔒 Mapa travado' : '🔓 Destravar ativo';
+                        buttonRef.title = locked ? 'Clique para destravar o movimento do mapa' : 'Clique para travar novamente';
+                        buttonRef.style.background = locked ? 'rgba(15,23,42,0.88)' : 'rgba(2,132,199,0.92)';
+                    }}
+                }}
+
+                var LockToggleControl = L.Control.extend({{
+                    options: {{ position: 'topright' }},
+                    onAdd: function() {{
+                        var container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+                        container.style.background = 'transparent';
+                        container.style.border = 'none';
+                        container.style.boxShadow = 'none';
+
+                        var btn = L.DomUtil.create('button', '', container);
+                        buttonRef = btn;
+                        btn.type = 'button';
+                        btn.style.height = '30px';
+                        btn.style.padding = '0 10px';
+                        btn.style.borderRadius = '8px';
+                        btn.style.border = '1px solid rgba(255,255,255,0.35)';
+                        btn.style.color = '#F8FAFC';
+                        btn.style.fontSize = '12px';
+                        btn.style.fontWeight = '700';
+                        btn.style.cursor = 'pointer';
+                        btn.style.boxShadow = '0 4px 10px rgba(15,23,42,0.28)';
+                        btn.style.letterSpacing = '0.2px';
+                        btn.style.backdropFilter = 'blur(2px)';
+
+                        L.DomEvent.disableClickPropagation(container);
+                        L.DomEvent.disableScrollPropagation(container);
+                        L.DomEvent.on(btn, 'click', function(e) {{
+                            L.DomEvent.stopPropagation(e);
+                            L.DomEvent.preventDefault(e);
+                            locked = !locked;
+                            applyLockState();
+                        }});
+
+                        applyLockState();
+                        return container;
+                    }}
+                }});
+
+                map.addControl(new LockToggleControl());
+                applyLockState();
+            }}
+
+            boot(0);
+        }})();
+        </script>
+        """
+        map_obj.get_root().html.add_child(folium.Element(script))
+
+    def territorial_kpi_card(title, value, subtitle="", accent="#22C55E", icon="📊"):
+        subtitle_tones = {
+            "#38BDF8": "#0369A1",
+            "#34D399": "#047857",
+            "#F59E0B": "#B45309",
+            "#F43F5E": "#BE123C",
+            "#2563EB": "#1D4ED8",
+            "#22C55E": "#15803D",
+        }
+        help_text = (
+            f"Motivo: este KPI monitora {title.lower()} na leitura territorial. "
+            f"Para que serve: {subtitle if subtitle else 'apoio direto a decisão operacional.'}"
+        )
+        top_kpi_card(
+            title,
+            value,
+            icon=icon,
+            subtitle="",
+            accent_color=accent,
+            subtitle_color=subtitle_tones.get(accent, "#475569"),
+        )
+
+    if max_colab == min_colab:
+        mapa_df["marker_size"] = 40.0
+    else:
+        norm = (mapa_df["qtd_colaboradores"] - min_colab) / (max_colab - min_colab)
+        mapa_df["marker_size"] = 10.0 + (norm.pow(0.50) * 80.0)
+
+    maps_slot = st.container()
+
+    section_start("", "", theme="territorial")
+    territorial_heading("Mapa geográfico do município")
+    mapa_render_df = mapa_df.copy().sort_values("qtd_colaboradores", ascending=True).reset_index(drop=True)
+    mapa_render_df["quantidade_label"] = mapa_render_df["qtd_colaboradores"].astype(int).astype(str)
+    mapa_render_df["tooltip_unidade"] = mapa_render_df["unidade"].fillna("Não informado")
+    mapa_render_df["fill_color"] = mapa_render_df["tipo"].map({
+        "UPA": [239, 68, 68, 220],
+        "UBSF": [22, 163, 74, 220],
+    })
+    mapa_render_df["fill_color"] = mapa_render_df["fill_color"].apply(
+        lambda color: color if isinstance(color, list) else [37, 99, 235, 220]
+    )
+    mapa_render_df["radius_m"] = mapa_render_df["marker_size"] * 22.0
+    unidades_criticas_norm = {
+        normalize_text("UPA II - UPA DE LUZIANIA"),
+        normalize_text("UPA I - UPA DO JARDIM INGA"),
+        normalize_text("UBSF - PARQUE ESTRELA DALVA IX FEIRINHA"),
+        normalize_text("UBSF - MINGONE II A"),
+        normalize_text("UBSF - PARQUE ALVORADA"),
+        normalize_text("UBSF - VILA JURACY"),
+        normalize_text("UBS - SETOR AEROPORTO"),
+    }
+
+    q_colab_60 = float(mapa_render_df["qtd_colaboradores"].quantile(0.60))
+    q_colab_85 = float(mapa_render_df["qtd_colaboradores"].quantile(0.85))
+    q_colab_95 = float(mapa_render_df["qtd_colaboradores"].quantile(0.95))
+    unidades_criticas_mapa = int((mapa_render_df["qtd_colaboradores"] >= q_colab_85).sum())
+    summary_slot = st.container()
+
+    map_center = [
+        float(mapa_render_df["latitude"].median()),
+        float(mapa_render_df["longitude"].median()),
+    ]
+    initial_zoom_level = 11.5
+
+    mapa_folium = folium.Map(
+        location=map_center,
+        zoom_start=initial_zoom_level,
+        tiles="CartoDB Voyager",
+        control_scale=True,
+    )
+
+    cluster_layer = MarkerCluster(
+        name="Clusters operacionais",
+        icon_create_function="""
+        function(cluster) {
+            var count = cluster.getChildCount();
+            var tone = '#1D4ED8';
+            if (count >= 8) {
+                tone = '#B91C1C';
+            } else if (count >= 5) {
+                tone = '#B45309';
+            } else if (count >= 3) {
+                tone = '#0F766E';
+            }
+            return L.divIcon({
+                html: '<div style="background:' + tone + ';border:2px solid rgba(255,255,255,0.85);width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;box-shadow:0 6px 14px rgba(15,23,42,0.30);">' + count + '</div>',
+                className: 'territorial-cluster-icon',
+                iconSize: [34, 34]
+            });
+        }
+        """,
+    )
+    cluster_layer.add_to(mapa_folium)
+
+    for _, row in mapa_render_df.iterrows():
+        qtd = int(row["qtd_colaboradores"])
+        if qtd >= q_colab_95:
+            cor = "#b91c1c"
+            nivel = "Critico"
+        elif qtd >= q_colab_85:
+            cor = "#ea580c"
+            nivel = "Alto"
+        elif qtd >= q_colab_60:
+            cor = "#0284c7"
+            nivel = "Moderado"
         else:
-            df_t["TURNO"] = df_t["HORA"].apply(lambda h: "Diurno" if 7 <= h < 19 else "Noturno")
-            df_t["DIA_STR"] = df_t["DATA"].dt.strftime("%d/%m")
-            dias_ordem = sorted(df_t["DIA_STR"].unique())
-            pivot_t = (
-                df_t.groupby(["TURNO", "DIA_STR"])
-                .size()
-                .reset_index(name="QTD")
-                .pivot(index="TURNO", columns="DIA_STR", values="QTD")
+            cor = "#0f766e"
+            nivel = "Base"
+
+        raio = max(15, min(31, int(round(float(row["marker_size"]) / 3.2))))
+        tooltip_html = (
+            f"<b>{html.escape(str(row['unidade']))}</b><br>"
+            f"Tipo: {html.escape(str(row['tipo']))}<br>"
+            f"Lat/Lon: <b>{float(row['latitude']):.5f}, {float(row['longitude']):.5f}</b><br>"
+            f"Colaboradores: <b>{qtd}</b><br>"
+            f"Com CRM: <b>{int(row['qtd_medicos'])}</b><br>"
+            f"Faixa operacional: <b>{nivel}</b>"
+        )
+
+        folium.CircleMarker(
+            location=[float(row["latitude"]), float(row["longitude"])],
+            radius=raio + 6,
+            color=cor,
+            weight=0,
+            fill=True,
+            fill_color=cor,
+            fill_opacity=0.18,
+            tooltip=folium.Tooltip(tooltip_html, sticky=True),
+        ).add_to(mapa_folium)
+
+        folium.CircleMarker(
+            location=[float(row["latitude"]), float(row["longitude"])],
+            radius=raio,
+            color="#0F172A",
+            weight=1.5,
+            fill=True,
+            fill_color=cor,
+            fill_opacity=0.92,
+            tooltip=folium.Tooltip(tooltip_html, sticky=True),
+        ).add_to(mapa_folium)
+
+        folium.Marker(
+            location=[float(row["latitude"]), float(row["longitude"])],
+            icon=folium.DivIcon(
+                html=f'''
+                <div style="
+                    min-width: {raio * 1.15}px;
+                    height: {raio * 0.95}px;
+                    line-height: {raio * 0.95}px;
+                    border-radius: 999px;
+                    padding: 0 6px;
+                    background: rgba(15, 23, 42, 0.70);
+                    border: 1px solid rgba(255,255,255,0.35);
+                    color: #F8FAFC;
+                    text-align: center;
+                    font-size: 11px;
+                    font-weight: 800;
+                    letter-spacing: 0.2px;
+                    box-shadow: 0 3px 8px rgba(0,0,0,0.35);
+                    transform: translate(-50%, -50%);
+                ">{qtd}</div>
+                '''
+            ),
+        ).add_to(mapa_folium)
+
+        folium.Marker(
+            location=[float(row["latitude"]), float(row["longitude"])],
+            tooltip=folium.Tooltip(tooltip_html, sticky=True),
+            icon=folium.DivIcon(
+                html=(
+                    "<div style='width:10px;height:10px;border-radius:50%;"
+                    f"background:{cor};border:2px solid #ffffff;box-shadow:0 2px 8px rgba(15,23,42,0.35);'></div>"
+                )
+            ),
+        ).add_to(cluster_layer)
+
+    folium.LayerControl(collapsed=True).add_to(mapa_folium)
+    add_map_lock_control(mapa_folium, initially_locked=True)
+    mapa_geo_html = mapa_folium.get_root().render()
+
+    unidades_criticas_df = (
+        mapa_df[mapa_df["unidade_norm"].isin(unidades_criticas_norm)][["unidade", "tipo", "qtd_colaboradores"]]
+        .sort_values(["tipo", "unidade"])
+        .rename(columns={"unidade": "Unidade", "tipo": "Tipo", "qtd_colaboradores": "Colaboradores"})
+    )
+    if not unidades_criticas_df.empty:
+        section_start("", "", theme="territorial")
+        territorial_heading("Unidades verificadas")
+        territorial_info_line(
+            "Tabela de unidades verificadas",
+            "Motivo: detalhar unidades monitoradas como críticas. Para que serve: apoiar validação rápida dos pontos de atenção no efetivo."
+        )
+        render_elegant_table(
+            unidades_criticas_df,
+            column_config={
+                "Unidade": st.column_config.TextColumn("Unidade"),
+                "Tipo": st.column_config.TextColumn("Tipo"),
+                "Colaboradores": st.column_config.NumberColumn("Colaboradores", format="%d"),
+            },
+            emphasis_columns=["Unidade"],
+            bar_columns=["Colaboradores"],
+            key="mt_tbl_unidades_criticas",
+        )
+        section_end()
+
+    section_end()
+
+    celk = load_celk_data(_mtime=_celk_mtime())
+    if celk is None or celk.empty:
+        st.warning("Arquivo CELK não encontrado ou sem dados para gerar o mapa de calor.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    meses_celk = sorted(
+        celk["MES_LABEL"].dropna().unique().tolist(),
+        key=lambda m: pd.to_datetime(m, format="%b/%y", errors="coerce"),
+    )
+    opcoes_mes = ["Todos"] + meses_celk
+    idx_mes = opcoes_mes.index("Mar/26") if "Mar/26" in opcoes_mes else 0
+
+    mes_heat = st.session_state.get("mt_heat_mes", opcoes_mes[idx_mes] if opcoes_mes else "Todos")
+    if mes_heat not in opcoes_mes:
+        mes_heat = opcoes_mes[idx_mes] if opcoes_mes else "Todos"
+    radius_heat = int(st.session_state.get("mt_heat_radius", 38))
+    blur_heat = int(st.session_state.get("mt_heat_suavizacao", 20))
+    opacidade_heat = float(st.session_state.get("mt_heat_opacidade", 0.78))
+    foco_nucleo = bool(st.session_state.get("mt_heat_focus_core", True))
+    mostrar_halo = bool(st.session_state.get("mt_heat_halo", True))
+
+    celk_heat = celk.copy()
+    if mes_heat != "Todos":
+        celk_heat = celk_heat[celk_heat["MES_LABEL"] == mes_heat]
+
+    if celk_heat.empty:
+        st.info("Sem atendimentos para o período selecionado.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    unidade_col_celk = "UNIDADE" if "UNIDADE" in celk_heat.columns else "UNIDADE_PAINEL"
+
+    def _unit_family(val):
+        txt = normalize_text(val) or ""
+        if "UPA" in txt:
+            return "UPA"
+        if any(tag in txt for tag in ["UBSF", "UBS", "PSF"]):
+            return "UBS"
+        return "OUTROS"
+
+    def _unit_key(val):
+        txt = normalize_text(val) or ""
+        txt = re.sub(r"[^A-Z0-9 ]", " ", txt)
+        tokens = [t for t in txt.split() if t]
+        stop = {
+            "UBS", "UBSF", "PSF", "UPA", "UNIDADE", "BASICA", "SAUDE", "DE", "DO", "DA", "DAS", "DOS",
+            "PRONTO", "ATENDIMENTO", "SERVICO", "CENTRO",
+        }
+        tokens = [t for t in tokens if t not in stop]
+        family = _unit_family(val)
+        key_base = " ".join(tokens)
+        return f"{family} {key_base}".strip()
+
+    atend_por_unidade = (
+        celk_heat[unidade_col_celk]
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .to_frame(name="unidade_celk")
+    )
+    atend_por_unidade["unidade_norm"] = atend_por_unidade["unidade_celk"].map(normalize_text)
+    atend_por_unidade["unidade_key"] = atend_por_unidade["unidade_celk"].map(_unit_key)
+    atend_por_unidade = (
+        atend_por_unidade.groupby(["unidade_norm", "unidade_key"], as_index=False)
+        .size()
+        .rename(columns={"size": "qtd_atendimentos"})
+    )
+    atend_por_norm = (
+        atend_por_unidade.groupby("unidade_norm", as_index=False)["qtd_atendimentos"].sum()
+    )
+    atend_por_key = (
+        atend_por_unidade.groupby("unidade_key", as_index=False)["qtd_atendimentos"].sum()
+    )
+
+    geo_heat = mapa_df[["unidade", "unidade_norm", "latitude", "longitude", "tipo"]].copy()
+    geo_heat["unidade_key"] = geo_heat["unidade"].map(_unit_key)
+    geo_heat = geo_heat.merge(
+        atend_por_norm,
+        on="unidade_norm",
+        how="left",
+    )
+    geo_heat = geo_heat.merge(
+        atend_por_key.rename(columns={"qtd_atendimentos": "qtd_atendimentos_key"}),
+        on="unidade_key",
+        how="left",
+    )
+    geo_heat["qtd_atendimentos"] = geo_heat["qtd_atendimentos"].fillna(geo_heat["qtd_atendimentos_key"])
+    geo_heat = geo_heat.drop(columns=["qtd_atendimentos_key"])
+
+    # Fallback de correspondência por aproximação textual quando nomes variam entre GEO e CELK.
+    if geo_heat["qtd_atendimentos"].isna().any():
+        cnt_map = {
+            row["unidade_key"]: int(row["qtd_atendimentos"])
+            for _, row in atend_por_key.iterrows()
+            if pd.notna(row["unidade_key"])
+        }
+        cnt_map_norm = {
+            row["unidade_norm"]: int(row["qtd_atendimentos"])
+            for _, row in atend_por_norm.iterrows()
+            if pd.notna(row["unidade_norm"])
+        }
+
+        def _approx_count(un_key, un_norm):
+            if pd.isna(un_key) and pd.isna(un_norm):
+                return 0
+            if un_key in cnt_map:
+                return cnt_map[un_key]
+            if un_norm in cnt_map_norm:
+                return cnt_map_norm[un_norm]
+
+            un_key_txt = str(un_key or "")
+            un_norm_txt = str(un_norm or "")
+            un_tokens = set([t for t in un_key_txt.split() if t])
+            best_score = 0.0
+            best_value = 0
+
+            for k, v in cnt_map.items():
+                if not k:
+                    continue
+                if k in un_key_txt or un_key_txt in k:
+                    return v
+
+                score_seq = difflib.SequenceMatcher(None, un_key_txt, str(k)).ratio()
+                score = score_seq
+                if un_tokens:
+                    k_tokens = set([t for t in str(k).split() if t])
+                    union = max(len(un_tokens | k_tokens), 1)
+                    score_jaccard = len(un_tokens & k_tokens) / union
+                    score = max(score_seq, score_jaccard)
+                if score > best_score:
+                    best_score = score
+                    best_value = v
+
+            if best_score >= 0.62:
+                return best_value
+
+            best_norm_score = 0.0
+            best_norm_value = 0
+            for n, v in cnt_map_norm.items():
+                if not n:
+                    continue
+                score = difflib.SequenceMatcher(None, un_norm_txt, str(n)).ratio()
+                if score > best_norm_score:
+                    best_norm_score = score
+                    best_norm_value = v
+            if best_norm_score >= 0.72:
+                return best_norm_value
+            return 0
+
+        geo_heat["qtd_atendimentos"] = geo_heat.apply(
+            lambda r: _approx_count(r["unidade_key"], r["unidade_norm"]),
+            axis=1,
+        )
+
+    geo_heat["qtd_atendimentos"] = pd.to_numeric(geo_heat["qtd_atendimentos"], errors="coerce").fillna(0).astype(int)
+    heat_df = geo_heat.copy()
+
+    if heat_df.empty or int(heat_df["qtd_atendimentos"].sum()) == 0:
+        st.warning("Não foi possível casar unidades do GEO com atendimentos do CELK.")
+        section_end()
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    lat_med = float(heat_df["latitude"].median())
+    lon_med = float(heat_df["longitude"].median())
+    lat_tol = max(float(heat_df["latitude"].std()) * 0.25, 0.01)
+    lon_tol = max(float(heat_df["longitude"].std()) * 0.25, 0.01)
+
+    def _classifica_regiao(lat, lon):
+        dlat = float(lat) - lat_med
+        dlon = float(lon) - lon_med
+        if abs(dlat) <= lat_tol and abs(dlon) <= lon_tol:
+            return "Centro"
+        if abs(dlat) >= abs(dlon):
+            return "Norte" if dlat > 0 else "Sul"
+        return "Leste" if dlon > 0 else "Oeste"
+
+    heat_df["regiao"] = heat_df.apply(lambda r: _classifica_regiao(r["latitude"], r["longitude"]), axis=1)
+
+    q_heat_60 = float(heat_df["qtd_atendimentos"].quantile(0.60))
+    q_heat_85 = float(heat_df["qtd_atendimentos"].quantile(0.85))
+    q_heat_95 = float(heat_df["qtd_atendimentos"].quantile(0.95))
+    regiao_lider = str(heat_df.groupby("regiao")["qtd_atendimentos"].sum().sort_values(ascending=False).index[0])
+    with summary_slot:
+        summary_cols = st.columns(6)
+        with summary_cols[0]:
+            territorial_kpi_card(
+                "Unidades monitoradas",
+                format_int(len(mapa_render_df)),
+                subtitle="ativos no perímetro filtrado",
+                accent="#38BDF8",
+                icon="🏥",
             )
-            pivot_t = pivot_t.reindex(columns=[d for d in dias_ordem if d in pivot_t.columns])
-            pivot_t = pivot_t.reindex(["Diurno", "Noturno"])
-            fig_t = _heatmap_fig(
-                pivot_t,
-                f"{unidade_turno} — Atendimentos por Turno × Dia ({mes_turno})",
-                "Data",
-                "Turno",
-                colorscale=[
-                    [0.0, "#1a2744"],
-                    [0.3, "#2563eb"],
-                    [0.65, "#f59e0b"],
-                    [1.0, "#ef4444"],
-                ],
+        with summary_cols[1]:
+            territorial_kpi_card(
+                "Média por unidade",
+                f"{mapa_render_df['qtd_colaboradores'].mean():.1f}",
+                subtitle="densidade média do efetivo",
+                accent="#F59E0B",
+                icon="📊",
             )
-            st.plotly_chart(fig_t, use_container_width=True)
+        with summary_cols[2]:
+            territorial_kpi_card(
+                "Regiões críticas",
+                format_int(unidades_criticas_mapa),
+                subtitle="unidades acima do P85",
+                accent="#F43F5E",
+                icon="🚨",
+            )
+        with summary_cols[3]:
+            territorial_kpi_card(
+                "Atendimentos no período",
+                format_int(int(heat_df["qtd_atendimentos"].sum())),
+                subtitle="volume consolidado CELK",
+                accent="#38BDF8",
+                icon="🧭",
+            )
+        with summary_cols[4]:
+            territorial_kpi_card(
+                "Unidades com demanda",
+                format_int(int((heat_df["qtd_atendimentos"] > 0).sum())),
+                subtitle="com fluxo registrado",
+                accent="#34D399",
+                icon="🏥",
+            )
+        with summary_cols[5]:
+            territorial_kpi_card(
+                "Região líder",
+                regiao_lider,
+                subtitle="maior concentração operacional",
+                accent="#F59E0B",
+                icon="📍",
+            )
+
+    plot_df = heat_df.copy()
+    if foco_nucleo and len(plot_df) >= 8:
+        q_low_lon, q_high_lon = plot_df["longitude"].quantile([0.10, 0.90])
+        q_low_lat, q_high_lat = plot_df["latitude"].quantile([0.10, 0.90])
+        foco_df = plot_df[
+            plot_df["longitude"].between(float(q_low_lon), float(q_high_lon))
+            & plot_df["latitude"].between(float(q_low_lat), float(q_high_lat))
+        ].copy()
+        if len(foco_df) >= 5:
+            plot_df = foco_df
+
+    map_center_heat = [
+        float(plot_df["latitude"].median()),
+        float(plot_df["longitude"].median()),
+    ]
+
+    mapa_calor = folium.Map(
+        location=map_center_heat,
+        zoom_start=initial_zoom_level,
+        tiles="CartoDB positron",
+        control_scale=True,
+    )
+
+    max_heat_val = max(float(plot_df["qtd_atendimentos"].max()), 1.0)
+    heat_points = []
+    for _, r in plot_df.iterrows():
+        qtd = float(r["qtd_atendimentos"])
+        if qtd <= 0:
+            continue
+        # Peso mínimo para manter unidades com menor volume perceptíveis no calor.
+        peso = 0.25 + 0.75 * ((qtd / max_heat_val) ** 0.55)
+        heat_points.append([float(r["latitude"]), float(r["longitude"]), float(peso)])
+    HeatMap(
+        data=heat_points,
+        radius=radius_heat,
+        blur=blur_heat,
+        min_opacity=max(0.20, float(opacidade_heat) - 0.15),
+        max_zoom=14,
+        gradient={0.20: "#1d4ed8", 0.38: "#0ea5e9", 0.55: "#22c55e", 0.72: "#facc15", 0.86: "#f97316", 1.0: "#dc2626"},
+        name="Calor de atendimentos",
+    ).add_to(mapa_calor)
+
+    if mostrar_halo:
+        HeatMap(
+            data=heat_points,
+            radius=min(80, radius_heat + 14),
+            blur=min(46, blur_heat + 12),
+            min_opacity=max(0.08, float(opacidade_heat) - 0.45),
+            max_zoom=14,
+            gradient={0.25: "#60a5fa", 0.65: "#f59e0b", 1.0: "#ef4444"},
+            name="Halo de intensidade",
+            show=True,
+        ).add_to(mapa_calor)
+
+    unidades_layer = folium.FeatureGroup(name="Unidades", show=True)
+    for _, row in heat_df.iterrows():
+        atend = int(row["qtd_atendimentos"])
+        if atend >= q_heat_95:
+            cor = "#b91c1c"
+            nivel = "Critico"
+        elif atend >= q_heat_85:
+            cor = "#ea580c"
+            nivel = "Alto"
+        elif atend >= q_heat_60:
+            cor = "#0284c7"
+            nivel = "Moderado"
+        else:
+            cor = "#0f766e"
+            nivel = "Base"
+        raio_u = max(6, min(15, int(round(6 + (atend / max(float(heat_df["qtd_atendimentos"].max()), 1.0)) * 9))))
+        tip_heat = (
+            f"<b>{html.escape(str(row['unidade']))}</b><br>"
+            f"Lat/Lon: <b>{float(row['latitude']):.5f}, {float(row['longitude']):.5f}</b><br>"
+            f"Atendimentos: <b>{atend:,}</b><br>"
+            f"Regiao: <b>{html.escape(str(row['regiao']))}</b><br>"
+            f"Tipo: <b>{html.escape(str(row['tipo']))}</b><br>"
+            f"Classe de criticidade: <b>{nivel}</b>"
+        )
+        folium.CircleMarker(
+            location=[float(row["latitude"]), float(row["longitude"])],
+            radius=raio_u + 4,
+            color=cor,
+            weight=0,
+            fill=True,
+            fill_color=cor,
+            fill_opacity=0.15,
+            tooltip=folium.Tooltip(tip_heat, sticky=True),
+        ).add_to(unidades_layer)
+        folium.CircleMarker(
+            location=[float(row["latitude"]), float(row["longitude"])],
+            radius=raio_u,
+            color="#111827",
+            weight=1,
+            fill=True,
+            fill_color=cor,
+            fill_opacity=0.92,
+            tooltip=folium.Tooltip(tip_heat, sticky=True),
+        ).add_to(unidades_layer)
+    unidades_layer.add_to(mapa_calor)
+
+    hotspots = heat_df.sort_values("qtd_atendimentos", ascending=False).head(8)
+    hotspot_layer = folium.FeatureGroup(name="Top hotspots", show=True)
+    for _, row in hotspots.iterrows():
+        folium.Marker(
+            location=[float(row["latitude"]), float(row["longitude"])],
+            icon=folium.DivIcon(
+                html=(
+                    "<div style='transform: translate(-50%, -50%);'>"
+                    f"<span style='background:#0F172A;color:#F8FAFC;padding:3px 7px;border-radius:999px;"
+                    "font-size:11px;font-weight:800;border:1px solid rgba(255,255,255,0.35);box-shadow:0 2px 8px rgba(0,0,0,0.40);'>"
+                    f"{int(row['qtd_atendimentos'])}</span></div>"
+                )
+            ),
+            tooltip=f"Hotspot: {row['unidade']} | Atendimentos: {int(row['qtd_atendimentos']):,}",
+        ).add_to(hotspot_layer)
+    hotspot_layer.add_to(mapa_calor)
+
+    folium.LayerControl(collapsed=False).add_to(mapa_calor)
+    add_map_lock_control(mapa_calor, initially_locked=True)
+
+    legenda_html = """
+    <div style="position: fixed; bottom: 18px; left: 18px; z-index: 9999;
+                                background: rgba(255,255,255,0.96); border: 1px solid #dbe3ef; border-radius: 12px;
+                                padding: 10px 12px; font-size: 12px; line-height: 1.35; color: #111827; box-shadow:0 8px 20px rgba(15,23,42,0.12);">
+            <div style="font-weight: 800; margin-bottom: 7px; color:#0F172A;">Radar de criticidade</div>
+            <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#0f766e;margin-right:6px;"></span>Base (&lt; P60)</div>
+            <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#0284c7;margin-right:6px;"></span>Moderado (P60+)</div>
+            <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#ea580c;margin-right:6px;"></span>Alto (P85+)</div>
+            <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#b91c1c;margin-right:6px;"></span>Critico (P95+)</div>
+    </div>
+    """
+    mapa_calor.get_root().html.add_child(folium.Element(legenda_html))
+    mapa_calor_html = mapa_calor.get_root().render()
+
+    with maps_slot:
+        section_start(
+            "Centro Inteligente de Gestão Territorial e Operacional",
+            "",
+            theme="territorial",
+        )
+        st.markdown(
+            """
+            <style>
+            .stTabs [data-baseweb="tab-list"] {
+                gap: 0.6rem;
+                padding: 0.2rem 0.1rem 0.5rem 0.1rem;
+            }
+
+            .stTabs [data-baseweb="tab"] {
+                background: linear-gradient(180deg, rgba(15,108,189,0.12) 0%, rgba(15,108,189,0.05) 100%);
+                border: 1px solid rgba(15,108,189,0.35);
+                border-radius: 12px;
+                padding: 0.5rem 0.95rem;
+                min-height: 44px;
+                box-shadow: 0 2px 8px rgba(15, 108, 189, 0.08);
+            }
+
+            .stTabs [data-baseweb="tab"] p {
+                font-size: 1rem;
+                font-weight: 800;
+                letter-spacing: 0.01em;
+                color: #0b3b69;
+            }
+
+            .stTabs [aria-selected="true"] {
+                background: linear-gradient(180deg, rgba(15,108,189,0.24) 0%, rgba(15,108,189,0.12) 100%);
+                border: 2px solid #0F6CBD;
+                box-shadow: 0 0 0 1px rgba(15,108,189,0.15), 0 8px 18px rgba(15, 108, 189, 0.18);
+                transform: translateY(-1px);
+            }
+
+            .stTabs [aria-selected="true"] p {
+                color: #083055;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        tab_mapa, tab_colab, tab_efetivo, tab_resumo_regional, tab_ranking_atend, tab_aderencia = st.tabs([
+            "🗺️ Mapas territoriais",
+            "👥 Colaboradores por unidade",
+            "🏥 Ranking de efetivo por unidade",
+            "🌍 Resumo regional de atendimentos",
+            "📊 Ranking de atendimentos",
+            "🧩 Análise de aderência",
+        ])
+
+        with tab_mapa:
+            st.caption("Configurações do mapa de calor")
+            st.selectbox("Período", opcoes_mes, index=opcoes_mes.index(mes_heat), key="mt_heat_mes")
+            with st.expander("⚙ Configurações do mapa", expanded=False):
+                conf_col_1, conf_col_2 = st.columns(2)
+                with conf_col_1:
+                    st.markdown("<div class='mt-control-title' style='font-size:16px;font-weight:700;color:#334155;'>Configurações Heatmap</div>", unsafe_allow_html=True)
+                    st.slider("Raio", min_value=18, max_value=65, value=radius_heat, step=1, key="mt_heat_radius")
+                    st.slider("Suavização", min_value=8, max_value=36, value=blur_heat, step=1, key="mt_heat_suavizacao")
+                    st.slider("Opacidade", min_value=0.25, max_value=0.95, value=opacidade_heat, step=0.05, key="mt_heat_opacidade")
+                with conf_col_2:
+                    st.markdown("<div class='mt-control-title' style='font-size:16px;font-weight:700;color:#334155;'>Configurações Territoriais</div>", unsafe_allow_html=True)
+                    st.checkbox(
+                        "Foco geográfico inteligente",
+                        value=foco_nucleo,
+                        key="mt_heat_focus_core",
+                        help="Reduz influência de outliers para ampliar a leitura do núcleo operacional.",
+                    )
+                    st.checkbox(
+                        "Exibir halo de intensidade",
+                        value=mostrar_halo,
+                        key="mt_heat_halo",
+                        help="Liga/desliga a camada adicional de reforço visual da intensidade de atendimento.",
+                    )
+
+            col_map_1, col_map_2 = st.columns(2)
+            with col_map_1:
+                st.markdown(
+                    "<div style='font-size:20px;font-weight:900;color:#0B1220;line-height:1.2;'>Mapa de Colaboradores por Unidade " + territorial_help_badge(
+                        "Motivo: visualizar a distribuição espacial das unidades e do efetivo. Para que serve: entender cobertura territorial e apoiar decisões de alocação."
+                    ) + "</div>",
+                    unsafe_allow_html=True,
+                )
+                components.html(mapa_geo_html, height=690, scrolling=False)
+            with col_map_2:
+                st.markdown(
+                    "<div style='font-size:20px;font-weight:900;color:#0B1220;line-height:1.2;'>Mapa de Calor Assistencial " + territorial_help_badge(
+                        "Motivo: evidenciar concentração de demanda assistencial por região. Para que serve: priorizar áreas com maior pressão de atendimento."
+                    ) + "</div>",
+                    unsafe_allow_html=True,
+                )
+                components.html(mapa_calor_html, height=690, scrolling=False)
+
+        with tab_colab:
+            st.markdown(
+                "<div style='font-size:20px;font-weight:900;color:#0B1220;line-height:1.2;'>Colaboradores por Unidade</div>",
+                unsafe_allow_html=True,
+            )
+
+            if colab_df is None or colab_df.empty:
+                st.info("Sem dados de colaboradores na aba COLABORADORES.")
+            else:
+                unidades_validas = set(mapa_df["unidade_norm"].dropna().unique().tolist())
+                colab_view = colab_df[colab_df["unidade_norm"].isin(unidades_validas)].copy()
+
+                if colab_view.empty:
+                    st.info("Nenhum colaborador encontrado para o filtro atual de tipo de unidade.")
+                else:
+                    unidade_options = sorted(colab_view["unidade"].dropna().astype(str).str.strip().unique().tolist())
+                    unidade_sel = st.selectbox(
+                        "Selecionar unidade",
+                        options=unidade_options,
+                        key="mt_colab_unidade_sel",
+                    )
+
+                    colab_unidade = (
+                        colab_view[colab_view["unidade"] == unidade_sel]
+                        .copy()
+                        .sort_values(["colaborador", "cargo"], ascending=[True, True])
+                    )
+
+                    proventos_cols = [c for c in colab_unidade.columns if str(c).startswith("proventos_")]
+                    proventos_cols = sorted(proventos_cols)
+                    proventos_label_map = {
+                        c: f"Proventos {str(c).replace('proventos_', '').replace('_', ' ').title()}"
+                        for c in proventos_cols
+                    }
+
+                    proventos_col_sel = None
+                    if proventos_cols:
+                        proventos_col_sel = st.selectbox(
+                            "Mês de proventos",
+                            options=proventos_cols,
+                            index=len(proventos_cols) - 1,
+                            format_func=lambda x: proventos_label_map.get(x, x),
+                            key="mt_colab_proventos_mes_sel",
+                        )
+
+                    c1, c2, c3, c4, c5 = st.columns(5)
+                    with c1:
+                        territorial_kpi_card(
+                            "Total de colaboradores",
+                            format_int(int(colab_unidade["colaborador_id"].nunique())),
+                            subtitle="na unidade selecionada",
+                            accent="#38BDF8",
+                            icon="👥",
+                        )
+                    with c2:
+                        territorial_kpi_card(
+                            "Com CRM",
+                            format_int(int(colab_unidade["crm"].astype(str).str.strip().ne("").sum())),
+                            subtitle="profissionais com registro",
+                            accent="#22C55E",
+                            icon="🩺",
+                        )
+                    with c3:
+                        ativos_mask = colab_unidade["situacao"].map(
+                            lambda v: (normalize_text(v) or "") in {"ATIVO", "ATIVA", "EM ATIVIDADE"}
+                        )
+                        territorial_kpi_card(
+                            "Situação ativa",
+                            format_int(int(ativos_mask.sum())),
+                            subtitle="colaboradores ativos",
+                            accent="#14B8A6",
+                            icon="✅",
+                        )
+                    with c4:
+                        territorial_kpi_card(
+                            "Cargos distintos",
+                            format_int(int(colab_unidade["cargo"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())),
+                            subtitle="diversidade de funções",
+                            accent="#F59E0B",
+                            icon="🧭",
+                        )
+                    with c5:
+                        total_proventos = 0.0
+                        if proventos_col_sel:
+                            total_proventos = float(pd.to_numeric(colab_unidade[proventos_col_sel], errors="coerce").fillna(0).sum())
+                        territorial_kpi_card(
+                            "Proventos",
+                            format_currency_br(total_proventos),
+                            subtitle=proventos_label_map.get(proventos_col_sel, "mês selecionado") if proventos_col_sel else "sem coluna de proventos",
+                            accent="#7C3AED",
+                            icon="💰",
+                        )
+
+                    tabela_colab = colab_unidade.rename(columns={
+                        "colaborador": "Colaborador",
+                        "cpf": "CPF",
+                        "adm": "Adm",
+                        "situacao": "Situação",
+                        "cargo": "Cargo",
+                        "regime_trabalho": "Regime de trabalho",
+                        "crm": "CRM",
+                    })
+
+                    tabela_cols = [
+                        "Colaborador",
+                        "CPF",
+                        "Adm",
+                        "Situação",
+                        "Cargo",
+                        "Regime de trabalho",
+                        "CRM",
+                    ]
+                    if proventos_col_sel:
+                        proventos_col_nome = proventos_label_map.get(proventos_col_sel, "Proventos")
+                        tabela_colab[proventos_col_nome] = pd.to_numeric(
+                            tabela_colab.get(proventos_col_sel), errors="coerce"
+                        )
+                        tabela_cols.append(proventos_col_nome)
+
+                    tabela_colab = tabela_colab[tabela_cols]
+
+                    render_elegant_table(
+                        tabela_colab,
+                        column_config={
+                            "Colaborador": st.column_config.TextColumn("Colaborador"),
+                            "CPF": st.column_config.TextColumn("CPF"),
+                            "Adm": st.column_config.TextColumn("Adm"),
+                            "Situação": st.column_config.TextColumn("Situação"),
+                            "Cargo": st.column_config.TextColumn("Cargo"),
+                            "Regime de trabalho": st.column_config.TextColumn("Regime de trabalho"),
+                            "CRM": st.column_config.TextColumn("CRM"),
+                            **(
+                                {
+                                    proventos_label_map.get(proventos_col_sel, "Proventos"): st.column_config.NumberColumn(
+                                        proventos_label_map.get(proventos_col_sel, "Proventos"),
+                                        format="R$ %.2f",
+                                    )
+                                }
+                                if proventos_col_sel
+                                else {}
+                            ),
+                        },
+                        emphasis_columns=["Colaborador"],
+                        key="mt_tbl_colaboradores_unidade",
+                    )
+
+        with tab_efetivo:
+            section_start("", "", theme="territorial")
+            territorial_heading("Ranking de efetivo por unidade")
+            ranking_efetivo = ranking_df_filtrado.rename(columns={
+                "unidade": "Unidade",
+                "tipo": "Tipo",
+                "qtd_colaboradores": "Colaboradores",
+                "qtd_medicos": "Com CRM",
+            })
+
+            c_eff1, c_eff2, c_eff3 = st.columns(3)
+            with c_eff1:
+                territorial_kpi_card(
+                    "Maior efetivo",
+                    format_int(int(ranking_df_filtrado["qtd_colaboradores"].max())),
+                    subtitle="pico de capacidade por unidade",
+                    accent="#2563EB",
+                    icon="🏥",
+                )
+            with c_eff2:
+                territorial_kpi_card(
+                    "Efetivo mediano",
+                    f"{float(ranking_df_filtrado['qtd_colaboradores'].median()):.1f}",
+                    subtitle="base típica operacional",
+                    accent="#22C55E",
+                    icon="📈",
+                )
+            with c_eff3:
+                crm_share = 100.0 * float(ranking_df_filtrado["qtd_medicos"].sum()) / max(float(ranking_df_filtrado["qtd_colaboradores"].sum()), 1.0)
+                territorial_kpi_card(
+                    "Cobertura CRM",
+                    f"{crm_share:.1f}%",
+                    subtitle="participação médica no efetivo",
+                    accent="#F59E0B",
+                    icon="🩺",
+                )
+
+            territorial_info_line(
+                "Tabela de ranking de efetivo",
+                "Motivo: ordenar capacidade por unidade. Para que serve: identificar rapidamente concentração e possíveis desequilíbrios de efetivo."
+            )
+            render_elegant_table(
+                ranking_efetivo,
+                column_config={
+                    "Unidade": st.column_config.TextColumn("Unidade"),
+                    "Tipo": st.column_config.TextColumn("Tipo"),
+                    "Colaboradores": st.column_config.NumberColumn("Colaboradores", format="%d"),
+                    "Com CRM": st.column_config.NumberColumn("Com CRM", format="%d"),
+                },
+                emphasis_columns=["Unidade"],
+                bar_columns=["Colaboradores", "Com CRM"],
+                key="mt_tbl_ranking_efetivo",
+            )
+            section_end()
+        section_end()
+
+    if foco_nucleo:
+        pass
+
+    with tab_resumo_regional:
+        section_start("", "", theme="territorial")
+        territorial_heading("Resumo regional de atendimentos")
+        resumo_regional = (
+            heat_df.groupby("regiao", as_index=False)
+            .agg(
+                unidades=("unidade", "count"),
+                atendimentos=("qtd_atendimentos", "sum"),
+                media_unidade=("qtd_atendimentos", "mean"),
+            )
+            .sort_values("atendimentos", ascending=False)
+        )
+        total_at = max(float(resumo_regional["atendimentos"].sum()), 1.0)
+        resumo_regional["participacao_pct"] = (resumo_regional["atendimentos"] / total_at * 100).round(1)
+        resumo_regional_tbl = resumo_regional.rename(columns={
+            "regiao": "Região",
+            "unidades": "Unidades",
+            "atendimentos": "Atendimentos",
+            "media_unidade": "Média por unidade",
+            "participacao_pct": "Participação %",
+        })
+        if not resumo_regional.empty:
+            top_reg = resumo_regional.iloc[0]
+            c_reg1, c_reg2, c_reg3 = st.columns(3)
+            with c_reg1:
+                territorial_kpi_card(
+                    "Região líder",
+                    str(top_reg["regiao"]),
+                    subtitle="maior concentração de atendimento",
+                    accent="#2563EB",
+                    icon="🧭",
+                )
+            with c_reg2:
+                territorial_kpi_card(
+                    "Participação líder",
+                    f"{float(top_reg['participacao_pct']):.1f}%",
+                    subtitle="peso sobre o volume total",
+                    accent="#22C55E",
+                    icon="📊",
+                )
+            with c_reg3:
+                territorial_kpi_card(
+                    "Média regional",
+                    f"{float(resumo_regional['media_unidade'].mean()):.1f}",
+                    subtitle="atendimentos médios por unidade",
+                    accent="#F59E0B",
+                    icon="📍",
+                )
+            territorial_heading(f"Dominância da região líder: {float(top_reg['participacao_pct']):.1f}%")
+            st.progress(min(1.0, max(0.0, float(top_reg["participacao_pct"]) / 100.0)))
+
+        territorial_info_line(
+            "Tabela de resumo regional",
+            "Motivo: consolidar o volume por região. Para que serve: comparar participação regional e orientar foco tático."
+        )
+        render_elegant_table(
+            resumo_regional_tbl,
+            column_config={
+                "Região": st.column_config.TextColumn("Região"),
+                "Unidades": st.column_config.NumberColumn("Unidades", format="%d"),
+                "Atendimentos": st.column_config.NumberColumn("Atendimentos", format="%d"),
+                "Média por unidade": st.column_config.NumberColumn("Média por unidade", format="%.1f"),
+                "Participação %": st.column_config.NumberColumn("Participação %", format="%.1f%%"),
+            },
+            emphasis_columns=["Região"],
+            bar_columns=["Atendimentos", "Média por unidade"],
+            progress_columns=["Participação %"],
+            heatmap_columns=["Participação %"],
+            key="mt_tbl_resumo_regional",
+        )
+        section_end()
+
+    with tab_ranking_atend:
+        section_start("", "", theme="territorial")
+        territorial_heading("Ranking de atendimentos")
+        ranking_atend = heat_df[["unidade", "tipo", "qtd_atendimentos"]]
+        ranking_atend = ranking_atend.sort_values("qtd_atendimentos", ascending=False).rename(columns={
+            "unidade": "Unidade",
+            "tipo": "Tipo",
+            "qtd_atendimentos": "Atendimentos",
+        })
+        territorial_info_line(
+            "Tabela de ranking de atendimentos",
+            "Motivo: ranquear unidades por volume de atendimento. Para que serve: acelerar priorização operacional e análise de pressão local."
+        )
+        render_elegant_table(
+            ranking_atend,
+            column_config={
+                "Unidade": st.column_config.TextColumn("Unidade"),
+                "Tipo": st.column_config.TextColumn("Tipo"),
+                "Atendimentos": st.column_config.NumberColumn("Atendimentos", format="%d"),
+            },
+            emphasis_columns=["Unidade"],
+            bar_columns=["Atendimentos"],
+            heatmap_columns=["Atendimentos"],
+            key="mt_tbl_ranking_atendimentos",
+        )
+        section_end()
+
+    # Cálculos base da análise de aderência (renderização ocorre dentro da aba dedicada).
+
+    efetivo_base = (
+        mapa_df[["unidade_norm", "unidade", "tipo", "qtd_colaboradores", "qtd_medicos"]]
+        .drop_duplicates(subset=["unidade_norm"])
+        .copy()
+    )
+    aderencia_df = heat_df.merge(
+        efetivo_base,
+        on="unidade_norm",
+        how="left",
+        suffixes=("_heat", "_efetivo"),
+    )
+    aderencia_df["unidade_ref"] = aderencia_df["unidade_efetivo"].fillna(aderencia_df["unidade_heat"])
+    aderencia_df["tipo_ref"] = aderencia_df["tipo_efetivo"].fillna(aderencia_df["tipo_heat"])
+    aderencia_df["qtd_colaboradores"] = pd.to_numeric(aderencia_df["qtd_colaboradores"], errors="coerce").fillna(0)
+    aderencia_df["qtd_medicos"] = pd.to_numeric(aderencia_df["qtd_medicos"], errors="coerce").fillna(0)
+    aderencia_df = aderencia_df[(aderencia_df["qtd_atendimentos"] > 0) | (aderencia_df["qtd_colaboradores"] > 0)].copy()
+
+    total_atend_ader = max(float(aderencia_df["qtd_atendimentos"].sum()), 1.0)
+    total_colab_ader = max(float(aderencia_df["qtd_colaboradores"].sum()), 1.0)
+
+    aderencia_df["share_atend"] = aderencia_df["qtd_atendimentos"] / total_atend_ader
+    aderencia_df["share_colab"] = aderencia_df["qtd_colaboradores"] / total_colab_ader
+
+    def _indice_adequacao(row):
+        if float(row["share_atend"]) <= 0:
+            return 1.0 if float(row["share_colab"]) <= 0 else 9.99
+        return float(row["share_colab"]) / float(row["share_atend"])
+
+    aderencia_df["indice_adequacao"] = aderencia_df.apply(_indice_adequacao, axis=1)
+    aderencia_df["colaboradores_ideal"] = (aderencia_df["qtd_atendimentos"] / total_atend_ader) * total_colab_ader
+    aderencia_df["gap_colaboradores"] = aderencia_df["colaboradores_ideal"] - aderencia_df["qtd_colaboradores"]
+
+    def _status_adequacao(idx):
+        if idx < 0.85:
+            return "Deficit de efetivo"
+        if idx > 1.15:
+            return "Excesso relativo de efetivo"
+        return "Equilibrado"
+
+    aderencia_df["status_adequacao"] = aderencia_df["indice_adequacao"].map(_status_adequacao)
+
+    total_unid_ader = max(len(aderencia_df), 1)
+    qtd_excesso = int((aderencia_df["status_adequacao"] == "Excesso relativo de efetivo").sum())
+    qtd_equil = int((aderencia_df["status_adequacao"] == "Equilibrado").sum())
+    qtd_critico = int((aderencia_df["status_adequacao"] == "Deficit de efetivo").sum())
+
+    with tab_aderencia:
+        section_start("", "", theme="territorial")
+        territorial_heading("Análise de aderência")
+        territorial_info_line(
+            "KPIs de inteligência territorial",
+            "Motivo: comparar demanda assistencial versus distribuição de efetivo. Para que serve: orientar recomposição de equipes."
+        )
+        ex2, ex3, ex4 = st.columns(3)
+        with ex2:
+            territorial_kpi_card("Equilibradas", format_int(qtd_equil), subtitle="dentro da faixa ideal", accent="#22C55E", icon="✅")
+        with ex3:
+            territorial_kpi_card("Excesso", format_int(qtd_excesso), subtitle="capacidade acima da demanda", accent="#F59E0B", icon="⚖️")
+        with ex4:
+            territorial_kpi_card("Déficit", format_int(qtd_critico), subtitle="necessidade de recomposição", accent="#EF4444", icon="🚨")
+        section_end()
+
+    
+
+    med_at = float(aderencia_df["qtd_atendimentos"].median()) if not aderencia_df.empty else 0.0
+    med_col = float(aderencia_df["qtd_colaboradores"].median()) if not aderencia_df.empty else 0.0
+
+    def _quadrante(row):
+        alta_demanda = float(row["qtd_atendimentos"]) >= med_at
+        alto_efetivo = float(row["qtd_colaboradores"]) >= med_col
+        if alta_demanda and (not alto_efetivo):
+            return "Alta demanda / Baixo efetivo"
+        if alta_demanda and alto_efetivo:
+            return "Alta demanda / Alto efetivo"
+        if (not alta_demanda) and alto_efetivo:
+            return "Baixa demanda / Alto efetivo"
+        return "Baixa demanda / Baixo efetivo"
+
+    aderencia_df["quadrante"] = aderencia_df.apply(_quadrante, axis=1)
+
+    quadrante_ordem = [
+        "Alta demanda / Baixo efetivo",
+        "Alta demanda / Alto efetivo",
+        "Baixa demanda / Alto efetivo",
+        "Baixa demanda / Baixo efetivo",
+    ]
+    resumo_quadrantes = (
+        aderencia_df.groupby("quadrante", as_index=False)
+        .agg(
+            unidades=("unidade_ref", "count"),
+            atendimentos=("qtd_atendimentos", "sum"),
+            colaboradores=("qtd_colaboradores", "sum"),
+        )
+    )
+    resumo_quadrantes["quadrante"] = pd.Categorical(
+        resumo_quadrantes["quadrante"],
+        categories=quadrante_ordem,
+        ordered=True,
+    )
+    resumo_quadrantes = resumo_quadrantes.sort_values("quadrante")
+
+    with tab_aderencia:
+        section_start("", "", theme="territorial")
+        territorial_heading("Resumo por quadrante")
+        resumo_quadrantes_tbl = resumo_quadrantes.rename(columns={
+            "quadrante": "Quadrante",
+            "unidades": "Unidades",
+            "atendimentos": "Atendimentos",
+            "colaboradores": "Colaboradores",
+        })
+        if not resumo_quadrantes.empty:
+            quad_crit = resumo_quadrantes[resumo_quadrantes["quadrante"] == "Alta demanda / Baixo efetivo"]
+            pct_crit = 0.0
+            if not quad_crit.empty:
+                pct_crit = 100.0 * float(quad_crit["unidades"].sum()) / max(float(resumo_quadrantes["unidades"].sum()), 1.0)
+            qd1, qd2, qd3 = st.columns(3)
+            with qd1:
+                territorial_kpi_card("Quadrante crítico", f"{pct_crit:.1f}%", subtitle="alta demanda e baixo efetivo", accent="#EF4444", icon="🚨")
+            with qd2:
+                territorial_kpi_card("Unidades em risco", format_int(int(quad_crit["unidades"].sum()) if not quad_crit.empty else 0), subtitle="prioridade de intervenção", accent="#F59E0B", icon="⚠️")
+            with qd3:
+                territorial_kpi_card("Quadrantes ativos", format_int(int(len(resumo_quadrantes))), subtitle="cenários operacionais mapeados", accent="#2563EB", icon="🧩")
+            territorial_heading(f"Pressão no quadrante crítico: {pct_crit:.1f}% das unidades")
+            st.progress(min(1.0, max(0.0, pct_crit / 100.0)))
+
+        territorial_info_line(
+            "Tabela de quadrantes",
+            "Motivo: classificar unidades por combinação de demanda e efetivo. Para que serve: orientar estratégias diferentes para cada cenário operacional."
+        )
+        render_elegant_table(
+            resumo_quadrantes_tbl,
+            column_config={
+                "Quadrante": st.column_config.TextColumn("Quadrante"),
+                "Unidades": st.column_config.NumberColumn("Unidades", format="%d"),
+                "Atendimentos": st.column_config.NumberColumn("Atendimentos", format="%d"),
+                "Colaboradores": st.column_config.NumberColumn("Colaboradores", format="%d"),
+            },
+            emphasis_columns=["Quadrante"],
+            bar_columns=["Atendimentos", "Colaboradores"],
+            heatmap_columns=["Atendimentos"],
+            key="mt_tbl_resumo_quadrantes",
+        )
+        section_end()
+
+    with tab_mapa:
+        section_start("", "", theme="territorial")
+        territorial_heading("Ranking de priorização")
+
+        gap_pos = aderencia_df.loc[aderencia_df["gap_colaboradores"] > 0, "gap_colaboradores"]
+        gap_threshold_crit = float(gap_pos.quantile(0.80)) if not gap_pos.empty else 0.0
+        gap_threshold_med = float(gap_pos.quantile(0.45)) if not gap_pos.empty else 0.0
+
+        def _prioridade_operacional(gap):
+            g = float(gap)
+            if g >= gap_threshold_crit and g > 0:
+                return "Critica"
+            if g >= gap_threshold_med and g > 0:
+                return "Moderada"
+            return "Baixa"
+
+        aderencia_df["prioridade_operacional"] = aderencia_df["gap_colaboradores"].map(_prioridade_operacional)
+
+        cprio_1, cprio_2, cprio_3 = st.columns(3)
+        with cprio_1:
+            territorial_kpi_card(
+                "Backlog de GAP",
+                f"{float(aderencia_df['gap_colaboradores'].clip(lower=0).sum()):.1f}",
+                subtitle="colaboradores a recompor",
+                accent="#F97316",
+                icon="📉",
+            )
+        with cprio_2:
+            territorial_kpi_card(
+                "Prioridade critica",
+                format_int(int((aderencia_df["prioridade_operacional"] == "Critica").sum())),
+                subtitle="unidades com maior necessidade",
+                accent="#EF4444",
+                icon="🚨",
+            )
+        with cprio_3:
+            territorial_kpi_card(
+                "Indice mediano",
+                f"{float(aderencia_df['indice_adequacao'].median()):.2f}",
+                subtitle="adequacao demanda x efetivo",
+                accent="#38BDF8",
+                icon="📊",
+            )
+
+        ranking_gap = (
+            aderencia_df[[
+                "unidade_ref",
+                "tipo_ref",
+                "regiao",
+                "qtd_atendimentos",
+                "qtd_colaboradores",
+                "colaboradores_ideal",
+                "gap_colaboradores",
+                "indice_adequacao",
+                "status_adequacao",
+                "prioridade_operacional",
+                "quadrante",
+            ]]
+            .sort_values("gap_colaboradores", ascending=False)
+            .rename(columns={
+                "unidade_ref": "Unidade",
+                "tipo_ref": "Tipo",
+                "regiao": "Regiao",
+                "qtd_atendimentos": "Atendimentos",
+                "qtd_colaboradores": "Colaboradores",
+                "colaboradores_ideal": "Colaboradores ideais",
+                "gap_colaboradores": "Gap colaboradores",
+                "indice_adequacao": "Indice adequacao",
+                "status_adequacao": "Status",
+                "prioridade_operacional": "Prioridade",
+                "quadrante": "Quadrante",
+            })
+        )
+        territorial_info_line(
+            "Tabela de priorização",
+            "Motivo: mostrar o gap de colaboradores por unidade. Para que serve: definir sequência de intervenção e redistribuição de equipe."
+        )
+        render_elegant_table(
+            ranking_gap,
+            column_config={
+                "Unidade": st.column_config.TextColumn("Unidade"),
+                "Tipo": st.column_config.TextColumn("Tipo"),
+                "Regiao": st.column_config.TextColumn("Região"),
+                "Atendimentos": st.column_config.NumberColumn("Atendimentos", format="%d"),
+                "Colaboradores": st.column_config.NumberColumn("Colaboradores", format="%d"),
+                "Colaboradores ideais": st.column_config.NumberColumn("Colaboradores ideais", format="%.1f"),
+                "Gap colaboradores": st.column_config.NumberColumn("Gap colaboradores", format="%.1f"),
+                "Indice adequacao": st.column_config.NumberColumn("Índice adequação", format="%.2f"),
+                "Status": st.column_config.TextColumn("Status"),
+                "Prioridade": st.column_config.TextColumn("Prioridade operacional"),
+                "Quadrante": st.column_config.TextColumn("Quadrante"),
+            },
+            status_columns=["Status", "Prioridade"],
+            emphasis_columns=["Unidade", "Gap colaboradores"],
+            bar_columns=["Gap colaboradores", "Atendimentos"],
+            heatmap_columns=["Indice adequacao", "Gap colaboradores"],
+            progress_columns=["Indice adequacao"],
+            critical_condition=lambda row: str(row.get("Status", "")).lower().startswith("deficit") or str(row.get("Prioridade", "")).lower().startswith("critica"),
+            key="mt_tbl_ranking_priorizacao",
+        )
 
         section_end()
 
+    st.markdown("</div>", unsafe_allow_html=True)
 
 st.sidebar.markdown(
     f"""
@@ -5219,10 +8345,6 @@ st.sidebar.markdown(
 
 usuario_logado = st.session_state.get("usuario_logado")
 
-st.sidebar.error(f"VERSAO ATIVA | {BUILD_TAG}")
-st.sidebar.caption(f"Build local: {globals().get('LOCAL_BUILD_STAMP', 'indisponivel')}")
-st.sidebar.caption(f"Usuario logado: {usuario_logado}")
-
 theme_by_user = {
     "admin": "Healthcare Clean (Verde)",
     "vittor": "Healthcare Clean (Verde)",
@@ -5241,7 +8363,7 @@ if st.session_state.get("visual_theme_user") != usuario_logado:
     st.session_state["visual_theme"] = default_theme_for_user
     st.session_state["visual_theme_user"] = usuario_logado
 
-visual_theme = st.sidebar.selectbox(
+visual_theme = st.selectbox(
     "Visual do portal",
     [
         "Portal Clínico (Azul)",
@@ -5258,24 +8380,42 @@ visual_theme = st.sidebar.selectbox(
 st.session_state["visual_theme"] = visual_theme
 apply_visual_theme(visual_theme)
 
-st.markdown("### Aparência")
-theme_col1, theme_col2, theme_col3 = st.columns(3)
+with st.expander("🎨 Temas", expanded=False):
+    st.markdown(
+        """
+        <style>
+        .stExpander > div > div {
+            padding: 0.2rem 0.4rem !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    theme_col1, theme_col2, theme_col3 = st.columns(3)
+    
+    if theme_col1.button("Portal Clínico", width="stretch", key="btn_portal"):
+        st.session_state["visual_theme"] = "Portal Clínico (Azul)"
+    if theme_col2.button("Pro Analytics", width="stretch", key="btn_pro"):
+        st.session_state["visual_theme"] = "Pro Analytics (Escuro)"
+    if theme_col3.button("Healthcare Clean", width="stretch", key="btn_healthcare"):
+        st.session_state["visual_theme"] = "Healthcare Clean (Verde)"
+    
+    if st.session_state["visual_theme"] != visual_theme:
+        apply_visual_theme(st.session_state["visual_theme"])
 
-if theme_col1.button("Portal Clínico", width="stretch"):
-    st.session_state["visual_theme"] = "Portal Clínico (Azul)"
-if theme_col2.button("Pro Analytics", width="stretch"):
-    st.session_state["visual_theme"] = "Pro Analytics (Escuro)"
-if theme_col3.button("Healthcare Clean", width="stretch"):
-    st.session_state["visual_theme"] = "Healthcare Clean (Verde)"
+st.divider()
 
-if st.session_state["visual_theme"] != visual_theme:
-    apply_visual_theme(st.session_state["visual_theme"])
+footer_col1, footer_col2, footer_col3 = st.columns(3)
+footer_col1.caption(f"🔵 VERSAO ATIVA | {BUILD_TAG}")
+footer_col2.caption(f"📅 Build local: {globals().get('LOCAL_BUILD_STAMP', 'indisponivel')}")
+footer_col3.caption(f"👤 Usuario logado: {usuario_logado}")
 
 paginas_unidades = [
     "UPA Luziânia",
     "UPA Jardim Ingá",
     "SAMU",
     "HMJI",
+    PAGINA_MAPA_TERRITORIAL,
     PAGINA_HEATMAP,
 ]
 
@@ -5294,44 +8434,24 @@ paginas_administrativo = [
 ]
 
 todas_paginas = paginas_unidades + paginas_basicas + paginas_administrativo
+paginas_disponiveis = todas_paginas
 
 pagina_icons = {
     "UPA Luziânia": "🚑",
     "UPA Jardim Ingá": "🚑",
     "SAMU": "🚨",
     "HMJI": "🏥",
+    PAGINA_MAPA_TERRITORIAL: "🗺️",
+    PAGINA_HEATMAP: "🔥",
     "Atenção Secundária": "🩺",
     "Saúde Mental": "🧠",
     "Atenção Primária": "💊",
     "Gestão de Pessoas": "👥",
-    "Financeiro": "💰",
     "Metas do Plano": "📊",
+    "Financeiro": "💰",
     PAGINA_ADMIN_ACESSOS: "🔐",
-    PAGINA_PRODUTIVIDADE: "📈",
-    "Produtividade UPAs": "📊",
-    PAGINA_HEATMAP: "🔥",
+    PAGINA_PRODUTIVIDADE: "📊",
 }
-
-paginas_disponiveis = [
-    p for p in todas_paginas
-    if usuario_pode_ver_pagina(usuario_logado, p)
-]
-
-# Fallback defensivo: garante exibicao da nova pagina mesmo com regras externas.
-if PAGINA_PRODUTIVIDADE not in paginas_administrativo:
-    paginas_administrativo.append(PAGINA_PRODUTIVIDADE)
-if PAGINA_PRODUTIVIDADE not in paginas_disponiveis:
-    paginas_disponiveis.append(PAGINA_PRODUTIVIDADE)
-if "SAMU" not in paginas_unidades:
-    paginas_unidades.append("SAMU")
-if "SAMU" not in paginas_disponiveis:
-    paginas_disponiveis.append("SAMU")
-
-paginas_disponiveis = list(dict.fromkeys(paginas_disponiveis))
-
-if not paginas_disponiveis:
-    st.error("Este usuário não possui acesso a nenhuma página.")
-    st.stop()
 
 if "pagina_selecionada" not in st.session_state or st.session_state["pagina_selecionada"] not in paginas_disponiveis:
     st.session_state["pagina_selecionada"] = paginas_disponiveis[0]
@@ -5339,7 +8459,6 @@ if "pagina_selecionada" not in st.session_state or st.session_state["pagina_sele
 # Compatibilidade: converte rótulo novo para chave interna estável.
 if st.session_state.get("pagina_selecionada") == ROTULO_PRODUTIVIDADE:
     st.session_state["pagina_selecionada"] = PAGINA_PRODUTIVIDADE
-
 st.sidebar.markdown('<div class="sidebar-group-label">Unidades</div>', unsafe_allow_html=True)
 for page in paginas_unidades:
     if page not in paginas_disponiveis:
@@ -5441,6 +8560,8 @@ if sincronizar:
     load_metas_total_geral_map.clear()
     load_samu_data.clear()
     load_produtividade_data.clear()
+    load_mapa_territorial_data.clear()
+    load_colaboradores_sheet.clear()
     st.rerun()
 
 uploaded = None
@@ -5523,6 +8644,7 @@ def render_admin_access_page():
         "UPA Jardim Ingá",
         "SAMU",
         "HMJI",
+        PAGINA_MAPA_TERRITORIAL,
         "Atenção Primária",
         "Atenção Secundária",
         "Saúde Mental",
@@ -5642,7 +8764,6 @@ def render_admin_access_page():
             st.error("Falha ao desativar usuario.")
 
 hero_header(pagina, source_name, meses_selecionados)
-st.info(f"Versao ativa do app: {BUILD_TAG}")
 
 if not usuario_pode_ver_pagina(usuario_logado, pagina):
     st.error("🚫 Você não tem acesso a esta página.")
@@ -5661,27 +8782,16 @@ elif pagina == "HMJI":
     render_hmji(data, meses_selecionados)
 
 elif pagina == "Atenção Secundária":
-    render_generic(data, "ATENÇÃO SECUNDÁRIA", [
-        "CONSULTAS ESPECIALIZADAS (CAIS)",
-        "CONSULTAS ESPECIALIZADAS (MATERNO INFANTIL)",
-        "CONSULTAS ESPECIALIZADAS (FARMÁCIA CENTRAL)",
-    ])
+    render_atencao_secundaria_tabs(data)
 
 elif pagina == "Saúde Mental":
-    render_generic(data, "SAÚDE MENTAL", [
-        "CONSULTAS ESPECIALIZADAS (CAPS II)",
-        "CONSULTAS ESPECIALIZADAS (CAPS AD III)",
-        "CONSULTAS ESPECIALIZADAS (CLÍNICA PSICOLOGIA)",
-    ])
+    render_saude_mental_tabs(data)
 
 elif pagina == "Atenção Primária":
-    render_generic(data, "ATENÇÃO PRIMÁRIA", [
-        "CONSULTAS MÉDICAS",
-        "NÍVEL SUPERIOR (EXCETO MÉDICO)",
-    ])
+    render_atencao_primaria_tabs(data)
 
 elif pagina == "Gestão de Pessoas":
-    render_rh_page(data, meses_selecionados)
+    render_rh_page(data, meses_selecionados, file_bytes=file_bytes, _mtime=_mtime)
 
 elif pagina == "Financeiro":
     render_financeiro_page(financeiro_data, meses_selecionados)
@@ -5691,6 +8801,9 @@ elif pagina == PAGINA_ADMIN_ACESSOS:
 
 elif pagina in [PAGINA_PRODUTIVIDADE, ROTULO_PRODUTIVIDADE]:
     render_produtividade_medica_page()
+
+elif pagina == PAGINA_MAPA_TERRITORIAL:
+    render_mapa_territorial_page(file_bytes=file_bytes, _mtime=_mtime)
 
 elif pagina == PAGINA_HEATMAP:
     render_heatmap_page()

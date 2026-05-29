@@ -196,9 +196,102 @@ details {{
 
 div[data-baseweb="select"] > div,
 div[data-baseweb="input"] > div {{
-    border-radius: 12px !important;
-    border-color: #CBD5E1 !important;
+    border-radius: 14px !important;
+    border: 1px solid rgba(148, 163, 184, 0.26) !important;
+    background: linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(248,250,252,0.92) 100%) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.75), 0 1px 4px rgba(15,23,42,0.05) !important;
+    min-height: 2.28rem !important;
+    transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease, background 0.18s ease !important;
 }}
+
+div[data-baseweb="select"] > div:hover,
+div[data-baseweb="input"] > div:hover {{
+    border-color: rgba(100, 116, 139, 0.34) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.78), 0 3px 8px rgba(15,23,42,0.06) !important;
+}}
+
+div[data-baseweb="select"] > div:focus-within,
+div[data-baseweb="input"] > div:focus-within {{
+    border-color: rgba(56, 189, 248, 0.52) !important;
+    box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.14), 0 4px 12px rgba(15,23,42,0.06) !important;
+    transform: translateY(-1px);
+}}
+
+div[data-testid="stMultiSelect"] > div > div {{
+    border-radius: 16px !important;
+    border: 1px solid rgba(148, 163, 184, 0.26) !important;
+    background: linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(248,250,252,0.92) 100%) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.75), 0 1px 4px rgba(15,23,42,0.05) !important;
+    min-height: 2.40rem !important;
+    padding: 0.28rem 0.36rem !important;
+    transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease, background 0.18s ease !important;
+}}
+
+div[data-testid="stMultiSelect"] > div > div:hover {{
+    border-color: rgba(100, 116, 139, 0.34) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.78), 0 3px 8px rgba(15,23,42,0.06) !important;
+}}
+
+div[data-testid="stMultiSelect"] > div > div:focus-within {{
+    border-color: rgba(56, 189, 248, 0.52) !important;
+    box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.14), 0 4px 12px rgba(15,23,42,0.06) !important;
+    transform: translateY(-1px);
+}}
+
+div[data-testid="stMultiSelect"] [data-baseweb="tag"] {{
+    border-radius: 999px !important;
+    border: 1px solid rgba(148, 163, 184, 0.32) !important;
+    background: linear-gradient(180deg, rgba(241,245,249,0.92) 0%, rgba(226,232,240,0.84) 100%) !important;
+    box-shadow: none !important;
+    margin: 0.14rem 0.22rem 0.14rem 0 !important;
+    padding: 0.08rem 0.35rem !important;
+    height: 1.42rem !important;
+}}
+
+div[data-testid="stMultiSelect"] [data-baseweb="tag"] span {{
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    color: #334155 !important;
+    letter-spacing: 0.01em;
+}}
+
+div[data-testid="stMultiSelect"] [data-baseweb="tag"] svg {{
+    width: 12px !important;
+    height: 12px !important;
+    opacity: 0.58 !important;
+}}
+
+div[data-baseweb="slider"] [role="slider"] {{
+    width: 14px !important;
+    height: 14px !important;
+    box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.10) !important;
+}}
+
+div[data-baseweb="slider"] > div {{
+    height: 4px !important;
+    border-radius: 999px !important;
+}}
+
+details {{
+    background: linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(248,250,252,0.92) 100%);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 16px;
+    padding: 0.38rem 0.82rem;
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
+}}
+
+details:hover {{
+    border-color: rgba(100, 116, 139, 0.30);
+}}
+
+details summary {{
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    color: #0F172A;
+}}
+
+details[open] {{
+    box-shadow: 0 12px 24px rgba(15, 23, 42, 0.06);
 
 div[data-testid="stPlotlyChart"] {{
     background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%) !important;
@@ -232,11 +325,12 @@ div[data-testid="stPlotlyChart"] > div {{
 }}
 
 .chart-exec-title {{
-    font-size: 15px;
+    font-size: 18px;
     font-weight: 800;
-    color: #0F172A;
+    color: #0B1220;
     line-height: 1.25;
-    letter-spacing: -0.2px;
+    letter-spacing: -0.3px;
+    text-rendering: geometricPrecision;
 }}
 
 .chart-exec-subtitle {{
