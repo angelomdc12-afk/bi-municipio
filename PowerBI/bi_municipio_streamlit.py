@@ -8697,18 +8697,6 @@ def render_admin_access_page():
     store_summary = read_auth_store_summary()
     st.caption(f"Persistencia local ativa em: {store_summary.get('store_path', 'indisponivel')}")
 
-    store_path_text = str(store_summary.get("store_path", "") or "")
-    if "/mount/data/" not in store_path_text.replace("\\", "/"):
-        st.warning(
-            "Persistencia local fora de /mount/data. Em deploy, usuarios locais podem sumir em atualizacoes. "
-            "Use o bloco de secrets gerado ao criar usuario para persistencia definitiva."
-        )
-
-    secrets_snippet = st.session_state.get("adm_last_user_secrets_snippet", "")
-    if secrets_snippet:
-        st.info("Para salvar este usuario exatamente como os demais do secrets, cole este bloco no secrets.toml do Streamlit Cloud.")
-        st.code(secrets_snippet, language="toml")
-
     tab_gestao, tab_auditoria = st.tabs([
         "👤 Gestao de usuarios",
         "🕵️ Auditoria de logins",
@@ -8773,18 +8761,6 @@ def render_admin_access_page():
                 perms_to_save = ["*"] if novo_admin_total else novo_permissoes
                 ok_perm = set_user_permissions(usuario_norm, perms_to_save)
                 if ok_pwd and ok_perm:
-                    refreshed_summary = read_auth_store_summary()
-                    created_hash = refreshed_summary.get("users", {}).get(usuario_norm, "")
-                    if created_hash:
-                        permissao_texto = "[*]" if novo_admin_total else json.dumps(perms_to_save, ensure_ascii=False)
-                        snippet = (
-                            f"[auth.users.{usuario_norm}]\n"
-                            f"password_hash = \"{created_hash}\"\n\n"
-                            f"[auth.permissions]\n"
-                            f"{usuario_norm} = {permissao_texto}"
-                        )
-                        st.session_state["adm_last_user_secrets_snippet"] = snippet
-
                     append_audit_event(
                         event="auth_user_create",
                         user=st.session_state.get("usuario_logado", ""),
@@ -8792,7 +8768,7 @@ def render_admin_access_page():
                         session_id=st.session_state.get("session_id", ""),
                         details=f"Usuario criado: {usuario_norm}",
                     )
-                    st.success("Usuario criado. Se quiser persistencia igual a secrets, use o bloco gerado acima.")
+                    st.success("Usuario criado com persistencia local.")
                     st.rerun()
                 else:
                     st.error("Falha ao gravar usuario. Verifique permissao de escrita em disco.")
