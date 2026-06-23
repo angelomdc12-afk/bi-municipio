@@ -130,6 +130,18 @@ def _store_file_rank(file_path, primary_file):
     return 4
 
 
+def _is_deploy_persistent_store(file_path):
+    """True quando o store está em volume persistente de deploy (/mount/data)."""
+    mount_file = _mount_auth_store_file()
+    if not mount_file:
+        return False
+
+    try:
+        return file_path.resolve() == mount_file.resolve()
+    except Exception:
+        return False
+
+
 def _default_store():
     return {
         "users": {},
@@ -284,12 +296,14 @@ def disable_user(username):
 def read_auth_store_summary():
     auth_store_file = _resolve_auth_store_file()
     store = _read_store()
+    store_is_deploy_persistent = _is_deploy_persistent_store(auth_store_file)
     return {
         "users": dict(store.get("users", {})),
         "permissions": dict(store.get("permissions", {})),
         "disabled_users": list(store.get("disabled_users", [])),
         "store_path": str(auth_store_file),
         "store_exists": auth_store_file.exists(),
+        "store_is_deploy_persistent": store_is_deploy_persistent,
     }
 
 

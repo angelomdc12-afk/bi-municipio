@@ -8697,6 +8697,19 @@ def render_admin_access_page():
     store_summary = read_auth_store_summary()
     st.caption(f"Persistencia local ativa em: {store_summary.get('store_path', 'indisponivel')}")
 
+    store_is_deploy_persistent = bool(store_summary.get("store_is_deploy_persistent", False))
+    allow_ephemeral = str(os.getenv("AUTH_ALLOW_EPHEMERAL_STORE", "")).strip() == "1"
+    is_local_windows = os.name == "nt"
+    allow_auth_writes = store_is_deploy_persistent or is_local_windows or allow_ephemeral
+
+    if not allow_auth_writes:
+        st.error(
+            "Cadastro/edicao de usuarios desativado: armazenamento nao persistente para deploy. "
+            "Configure auth.store_dir ou AUTH_STORE_DIR para /mount/data/bi-municipio "
+            "(ou habilite volume persistente no Streamlit Cloud)."
+        )
+        st.caption("Override tecnico temporario: AUTH_ALLOW_EPHEMERAL_STORE=1")
+
     tab_gestao, tab_auditoria = st.tabs([
         "👤 Gestao de usuarios",
         "🕵️ Auditoria de logins",
@@ -8746,7 +8759,7 @@ def render_admin_access_page():
             key="adm_new_permissions",
             disabled=novo_admin_total,
         )
-        if st.button("Criar usuario", key="adm_create_user", width="stretch"):
+        if st.button("Criar usuario", key="adm_create_user", width="stretch", disabled=(not allow_auth_writes)):
             usuario_norm = novo_usuario.strip()
             if not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", usuario_norm):
                 st.error("Usuario invalido. Use 3-32 caracteres: letras, numeros, _, . ou -")
@@ -8778,7 +8791,7 @@ def render_admin_access_page():
         n1, n2 = st.columns(2)
         senha_alt = n1.text_input("Nova senha", type="password", key="adm_change_password")
         senha_alt_conf = n2.text_input("Confirmar nova senha", type="password", key="adm_change_password_confirm")
-        if st.button("Salvar nova senha", key="adm_change_password_btn", width="stretch", disabled=not alvo_senha):
+        if st.button("Salvar nova senha", key="adm_change_password_btn", width="stretch", disabled=(not alvo_senha) or (not allow_auth_writes)):
             if len(senha_alt) < 6:
                 st.error("Senha muito curta. Use ao menos 6 caracteres.")
             elif senha_alt != senha_alt_conf:
@@ -8807,7 +8820,7 @@ def render_admin_access_page():
             key="adm_perm_pages",
             disabled=admin_total,
         )
-        if st.button("Salvar permissoes", key="adm_perm_save", width="stretch", disabled=not alvo_perm):
+        if st.button("Salvar permissoes", key="adm_perm_save", width="stretch", disabled=(not alvo_perm) or (not allow_auth_writes)):
             perms_to_save = ["*"] if admin_total else selected_perms
             if set_user_permissions(alvo_perm, perms_to_save):
                 append_audit_event(
@@ -8826,7 +8839,7 @@ def render_admin_access_page():
         candidatos_remocao = [u for u in usuarios_ordenados if u != "admin"]
         remover_usuario = st.selectbox("Usuario para desativar", candidatos_remocao, key="adm_remove_user") if candidatos_remocao else None
         confirma_remocao = st.checkbox("Confirmo a desativacao deste usuario", key="adm_remove_confirm")
-        if st.button("Desativar usuario", key="adm_remove_btn", width="stretch", disabled=(not remover_usuario)):
+        if st.button("Desativar usuario", key="adm_remove_btn", width="stretch", disabled=(not remover_usuario) or (not allow_auth_writes)):
             if not confirma_remocao:
                 st.error("Confirme a desativacao para continuar.")
             elif disable_user(remover_usuario):
