@@ -95,6 +95,16 @@ $env:STREAMLIT_SERVER_PORT = "$Port"
 $lastWrite = (Get-Item $appFullPath).LastWriteTime.ToString("dd/MM/yyyy HH:mm:ss")
 Write-Host "Ultima alteracao: $lastWrite" -ForegroundColor DarkGray
 
+Write-Host "[0/4] Configurando AUTH_STORE_FILE para persistencia de usuarios (se existir)" -ForegroundColor Cyan
+$authStorePath = Join-Path $repoRoot "PowerBI/logs/auth_store.json"
+if (Test-Path $authStorePath) {
+    $resolvedAuth = (Resolve-Path $authStorePath).Path
+    $env:AUTH_STORE_FILE = $resolvedAuth
+    Write-Host "AUTH_STORE_FILE definido para: $env:AUTH_STORE_FILE" -ForegroundColor DarkGray
+} else {
+    Write-Host "Aviso: auth_store nao encontrado em $authStorePath. Usando comportamento padrao." -ForegroundColor Yellow
+}
+
 if ($OpenBrowser) {
     $cacheBust = [DateTimeOffset]::Now.ToUnixTimeSeconds()
     Start-Process "http://localhost:$Port/?v=$cacheBust" | Out-Null
