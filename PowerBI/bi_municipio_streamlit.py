@@ -30,6 +30,26 @@ from style_utils import apply_global_styles
 
 
 USUARIOS_APP = load_auth_users_from_secrets()
+
+
+def get_usuarios_app():
+    return load_auth_users_from_secrets()
+
+
+def get_permissoes():
+    permissoes = load_permissions_from_secrets(PERMISSOES_PADRAO)
+    usuarios_app = get_usuarios_app()
+    for username in set(permissoes.keys()) | set(usuarios_app.keys()):
+        if username not in permissoes:
+            permissoes[username] = []
+        if "*" not in permissoes[username] and PAGINA_PRODUTIVIDADE not in permissoes[username]:
+            permissoes[username].append(PAGINA_PRODUTIVIDADE)
+        if "*" not in permissoes[username] and "Produtividade UPAs" not in permissoes[username]:
+            permissoes[username].append("Produtividade UPAs")
+        if "*" not in permissoes[username] and "SAMU" not in permissoes[username]:
+            permissoes[username].append("SAMU")
+    return permissoes
+
 TEMPO_SESSAO_HORAS = 8
 BUILD_TAG = "PM-2026-04-27-08"
 PAGINA_PRODUTIVIDADE = "Produtividade UPAs"
@@ -78,18 +98,7 @@ PERMISSOES_PADRAO = {
     ],
 }
 
-PERMISSOES = load_permissions_from_secrets(PERMISSOES_PADRAO)
-
-# Reforco para evitar sumico de paginas quando secrets nao traz merge de permissoes.
-for username in set(PERMISSOES.keys()) | set(USUARIOS_APP.keys()):
-    if username not in PERMISSOES:
-        PERMISSOES[username] = []
-    if "*" not in PERMISSOES[username] and PAGINA_PRODUTIVIDADE not in PERMISSOES[username]:
-        PERMISSOES[username].append(PAGINA_PRODUTIVIDADE)
-    if "*" not in PERMISSOES[username] and "Produtividade UPAs" not in PERMISSOES[username]:
-        PERMISSOES[username].append("Produtividade UPAs")
-    if "*" not in PERMISSOES[username] and "SAMU" not in PERMISSOES[username]:
-        PERMISSOES[username].append("SAMU")
+PERMISSOES = get_permissoes()
 
 
 def render_login():
@@ -292,8 +301,9 @@ def render_login():
     st.markdown('<div class="login-subtitle">Informe usuario e senha para continuar</div>', unsafe_allow_html=True)
     st.caption("Login build: LG-2026-04-27-12")
 
-    if not USUARIOS_APP:
-        st.error("Autenticação não configurada. Defina auth.users no secrets.toml.")
+    usuarios_app = get_usuarios_app()
+    if not usuarios_app:
+        st.error("Autenticação não configurada. Defina auth.users no secrets.toml ou configure auth_store persistente.")
         st.stop()
 
     col1, col2, col3 = st.columns([1, 1.8, 1])
@@ -303,8 +313,9 @@ def render_login():
         entrar = st.button("Entrar", width="stretch")
 
     if entrar:
-        usuario_ok = usuario in USUARIOS_APP
-        senha_ok = usuario_ok and verify_password(senha, USUARIOS_APP[usuario])
+        usuarios_app = get_usuarios_app()
+        usuario_ok = usuario in usuarios_app
+        senha_ok = usuario_ok and verify_password(senha, usuarios_app[usuario])
 
         if usuario_ok and senha_ok:
             st.session_state["autenticado"] = True
@@ -374,7 +385,7 @@ def usuario_pode_ver_pagina(usuario, pagina):
     if pagina_norm in liberadas_norm:
         return True
 
-    permissoes = PERMISSOES.get(usuario, [])
+    permissoes = get_permissoes().get(usuario, [])
     permissoes_norm = {normalize_text(p) for p in permissoes}
     if pagina_norm in permissoes_norm:
         return True
@@ -8716,10 +8727,12 @@ def render_admin_access_page():
     ])
 
     with tab_gestao:
-        usuarios_ordenados = sorted(USUARIOS_APP.keys(), key=lambda x: str(x).lower())
+        usuarios_app = get_usuarios_app()
+        permissoes = get_permissoes()
+        usuarios_ordenados = sorted(usuarios_app.keys(), key=lambda x: str(x).lower())
         table_rows = []
         for username in usuarios_ordenados:
-            perms = PERMISSOES.get(username, [])
+            perms = permissoes.get(username, [])
             table_rows.append(
                 {
                     "usuario": username,
