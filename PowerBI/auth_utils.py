@@ -335,9 +335,25 @@ def verify_password(password, stored_value):
     return hmac.compare_digest(stored_value, password)
 
 
+def _flatten_toml_mapping(raw, parent_key="", separator="."):
+    if not isinstance(raw, Mapping):
+        return raw
+
+    flattened = {}
+    for key, value in raw.items():
+        key_text = str(key)
+        new_key = f"{parent_key}{separator}{key_text}" if parent_key else key_text
+        if isinstance(value, Mapping):
+            flattened.update(_flatten_toml_mapping(value, new_key, separator))
+        else:
+            flattened[new_key] = value
+    return flattened
+
+
 def load_auth_users_from_secrets():
     auth_cfg = st.secrets.get("auth", {})
     users_cfg = auth_cfg.get("users", {}) if isinstance(auth_cfg, Mapping) else {}
+    users_cfg = _flatten_toml_mapping(users_cfg)
 
     users = {}
     for username, cfg in users_cfg.items():
@@ -378,6 +394,7 @@ def _normalize_permission_pages(raw_pages):
 def load_permissions_from_secrets(default_permissions):
     auth_cfg = st.secrets.get("auth", {})
     permissions_cfg = auth_cfg.get("permissions", {}) if isinstance(auth_cfg, Mapping) else {}
+    permissions_cfg = _flatten_toml_mapping(permissions_cfg)
 
     merged_permissions = {}
     for username, pages in (default_permissions or {}).items():
