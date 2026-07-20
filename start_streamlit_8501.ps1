@@ -95,14 +95,27 @@ $env:STREAMLIT_SERVER_PORT = "$Port"
 $lastWrite = (Get-Item $appFullPath).LastWriteTime.ToString("dd/MM/yyyy HH:mm:ss")
 Write-Host "Ultima alteracao: $lastWrite" -ForegroundColor DarkGray
 
-Write-Host "[0/4] Configurando AUTH_STORE_FILE para persistencia de usuarios (se existir)" -ForegroundColor Cyan
+Write-Host "[0/4] Configurando AUTH_STORE_FILE para persistencia de usuarios" -ForegroundColor Cyan
 $authStorePath = Join-Path $repoRoot "PowerBI/logs/auth_store.json"
-if (Test-Path $authStorePath) {
-    $resolvedAuth = (Resolve-Path $authStorePath).Path
+$persistentAuthStore = Join-Path $HOME ".bi-municipio\auth_store.json"
+$persistentAuthStoreDir = Split-Path $persistentAuthStore -Parent
+if (-not (Test-Path $persistentAuthStoreDir)) {
+    New-Item -Path $persistentAuthStoreDir -ItemType Directory -Force | Out-Null
+}
+if (-not (Test-Path $persistentAuthStore) -and (Test-Path $authStorePath)) {
+    Copy-Item -Path $authStorePath -Destination $persistentAuthStore -Force
+    Write-Host "Arquivo inicial copiado para persistencia: $persistentAuthStore" -ForegroundColor DarkGray
+}
+if (Test-Path $persistentAuthStore) {
+    $resolvedAuth = (Resolve-Path $persistentAuthStore).Path
     $env:AUTH_STORE_FILE = $resolvedAuth
     Write-Host "AUTH_STORE_FILE definido para: $env:AUTH_STORE_FILE" -ForegroundColor DarkGray
+} elseif (Test-Path $authStorePath) {
+    $resolvedAuth = (Resolve-Path $authStorePath).Path
+    $env:AUTH_STORE_FILE = $resolvedAuth
+    Write-Host "AUTH_STORE_FILE definido para repo logs fallback: $env:AUTH_STORE_FILE" -ForegroundColor Yellow
 } else {
-    Write-Host "Aviso: auth_store nao encontrado em $authStorePath. Usando comportamento padrao." -ForegroundColor Yellow
+    Write-Host "Aviso: auth_store nao encontrado; usando comportamento padrao." -ForegroundColor Yellow
 }
 
 if ($OpenBrowser) {
